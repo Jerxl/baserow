@@ -6,7 +6,7 @@ services:
     container_name: baserow
     image: baserow/baserow:1.33.3
     environment:
-      BASEROW_PUBLIC_URL: 'baserow.jeremyzhaoxl.com'
+      BASEROW_PUBLIC_URL: 'https://baserow.jeremyzhaoxl.com'
     ports:
       - "8080:80"
       - "8443:443"
