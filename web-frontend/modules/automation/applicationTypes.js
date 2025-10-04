@@ -3,6 +3,7 @@ import ApplicationContext from '@baserow/modules/automation/components/applicati
 import AutomationForm from '@baserow/modules/automation/components/form/AutomationForm'
 import SidebarComponentAutomation from '@baserow/modules/automation/components/sidebar/SidebarComponentAutomation'
 import { populateAutomationWorkflow } from '@baserow/modules/automation/store/automationWorkflow'
+import { DEVELOPMENT_STAGES } from '@baserow/modules/core/constants'
 
 export class AutomationApplicationType extends ApplicationType {
   static getType() {
@@ -53,9 +54,31 @@ export class AutomationApplicationType extends ApplicationType {
     $router.push({ name: 'dashboard' })
   }
 
+  async loadExtraData(automation) {
+    const { store } = this.app
+    if (!automation._loadedOnce) {
+      await Promise.all([
+        store.dispatch('integration/fetch', {
+          application: automation,
+        }),
+      ])
+
+      await store.dispatch('application/forceUpdate', {
+        application: automation,
+        data: { _loadedOnce: true },
+      })
+    }
+  }
+
   populate(application) {
     const values = super.populate(application)
     values.workflows = values.workflows.map(populateAutomationWorkflow)
+    if (!values.integrations) {
+      values.integrations = []
+    }
+    if (!values.selectedNodeId) {
+      values.selectedNodeId = null
+    }
     return values
   }
 
@@ -96,8 +119,8 @@ export class AutomationApplicationType extends ApplicationType {
     )
   }
 
-  isBeta() {
-    return true
+  get developmentStage() {
+    return DEVELOPMENT_STAGES.ALPHA
   }
 
   getOrder() {

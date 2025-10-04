@@ -49,6 +49,7 @@ class ElementHandler:
         "parent_element_id",
         "place_in_container",
         "visibility",
+        "css_classes",
         "styles",
         "style_border_top_color",
         "style_border_top_size",
@@ -79,6 +80,7 @@ class ElementHandler:
     allowed_fields_update = [
         "parent_element_id",
         "place_in_container",
+        "css_classes",
         "visibility",
         "styles",
         "style_border_top_color",
@@ -734,7 +736,7 @@ class ElementHandler:
     ) -> Element:
         """
         Creates an instance using the serialized version previously exported with
-        `.export_element'.
+        `.export_element`.
 
         :param page: The page instance the new element should belong to.
         :param serialized_element: The serialized version of the element.

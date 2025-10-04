@@ -34,7 +34,7 @@ from baserow.core.trash.operations import (
     ReadWorkspaceTrashOperationType,
 )
 from baserow.core.trash.registries import TrashableItemType, trash_item_type_registry
-from baserow.core.trash.signals import permanently_deleted
+from baserow.core.trash.signals import before_permanently_deleted, permanently_deleted
 
 User = get_user_model()
 
@@ -98,6 +98,9 @@ class TrashHandler(metaclass=baserow_trace_methods(tracer)):
                         parent_name=parent_name,
                         parent_trash_item_id=parent_trash_item_id,
                         trash_item_owner=trash_item_type.get_owner(trash_item),
+                        additional_restoration_data=trash_item_type.get_additional_restoration_data(
+                            trash_item
+                        ),
                     )
                 except IntegrityError as e:
                     if "unique constraint" in e.args[0]:
@@ -226,6 +229,16 @@ class TrashHandler(metaclass=baserow_trace_methods(tracer)):
         )
 
     @staticmethod
+    def mark_all_trash_for_permanent_deletion():
+        """
+        Updates all trash entries for permanent deletion.
+        Does not perform the deletion itself.
+        """
+
+        updated_count = TrashEntry.objects.update(should_be_permanently_deleted=True)
+        logger.info(f"Successfully marked {updated_count} trash items for deletion.")
+
+    @staticmethod
     def empty(requesting_user: User, workspace_id: int, application_id: Optional[int]):
         """
         Marks all items in the selected workspace (or application in the workspace if
@@ -328,6 +341,12 @@ class TrashHandler(metaclass=baserow_trace_methods(tracer)):
 
         _check_parent_id_valid(parent_id, trash_item_type)
         trash_item_id = to_delete.id
+        before_permanently_deleted.send(
+            sender=trash_item_type.type,
+            trash_item_id=trash_item_id,
+            trash_item=to_delete,
+            parent_id=parent_id,
+        )
         trash_item_type.permanently_delete_item(
             to_delete,
             trash_item_lookup_cache,
@@ -407,7 +426,9 @@ class TrashHandler(metaclass=baserow_trace_methods(tracer)):
 
     @staticmethod
     def get_trash_contents(
-        user: User, workspace_id: int, application_id: Optional[int]
+        user: User,
+        workspace_id: int,
+        application_id: Optional[int],
     ) -> QuerySet:
         """
         Looks up the trash contents for a particular workspace optionally filtered by
@@ -416,10 +437,10 @@ class TrashHandler(metaclass=baserow_trace_methods(tracer)):
         :param workspace_id: The workspace to lookup trash contents inside of.
         :param application_id: The optional application to filter down the trash
             contents to only this workspace.
-        :raises WorkspaceDoesNotExist: If the workspace_id is for an non
-            existent workspace.
-        :raises ApplicationDoesNotExist: If the application_id is for an non
-            existent application.
+        :raises WorkspaceDoesNotExist: If the workspace_id is for a non-existent
+            workspace.
+        :raises ApplicationDoesNotExist: If the application_id is for a non-existent
+            application.
         :raises ApplicationNotInWorkspace: If the application_id is for an application
             not in the requested workspace.
         :raises UserNotInWorkspace: If the user does not belong to the workspace.

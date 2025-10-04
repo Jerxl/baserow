@@ -101,6 +101,9 @@ export default function CoreModule(options) {
     BASEROW_ROW_PAGE_SIZE_LIMIT: parseInt(
       process.env.BASEROW_ROW_PAGE_SIZE_LIMIT ?? 200
     ),
+    INTEGRATION_LOCAL_BASEROW_PAGE_SIZE_LIMIT: parseInt(
+      process.env.BASEROW_INTEGRATION_LOCAL_BASEROW_PAGE_SIZE_LIMIT ?? 200
+    ),
     BASEROW_BUILDER_DOMAINS: process.env.BASEROW_BUILDER_DOMAINS
       ? process.env.BASEROW_BUILDER_DOMAINS.split(',')
       : [],
@@ -161,6 +164,7 @@ export default function CoreModule(options) {
       },
       locales,
       langDir: path.resolve(__dirname, '../../locales/'),
+      lazy: true,
       vueI18n: {
         fallbackLocale: 'en',
         silentFallbackWarn: true,
@@ -168,8 +172,11 @@ export default function CoreModule(options) {
     },
   ])
 
+  let alreadyExtended = false
   this.nuxt.hook('i18n:extend-messages', function (additionalMessages) {
+    if (alreadyExtended) return
     additionalMessages.push({ en, fr, nl, de, es, it, pl, ko })
+    alreadyExtended = true
   })
 
   // Serve the static directory

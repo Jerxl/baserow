@@ -1,5 +1,6 @@
 from typing import Dict
 
+from django.conf import settings
 from django.db import transaction
 
 from drf_spectacular.types import OpenApiTypes
@@ -13,18 +14,22 @@ from baserow.api.applications.errors import ERROR_APPLICATION_DOES_NOT_EXIST
 from baserow.api.decorators import map_exceptions, validate_body
 from baserow.api.jobs.errors import ERROR_MAX_JOB_COUNT_EXCEEDED
 from baserow.api.jobs.serializers import JobSerializer
+from baserow.api.pagination import PageNumberPagination
 from baserow.api.schemas import CLIENT_SESSION_ID_SCHEMA_PARAMETER, get_error_schema
+from baserow.api.serializers import get_example_pagination_serializer_class
 from baserow.contrib.automation.api.workflows.errors import (
     ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST,
     ERROR_AUTOMATION_WORKFLOW_NAME_NOT_UNIQUE,
     ERROR_AUTOMATION_WORKFLOW_NOT_IN_AUTOMATION,
 )
 from baserow.contrib.automation.api.workflows.serializers import (
+    AutomationWorkflowHistorySerializer,
     AutomationWorkflowSerializer,
     CreateAutomationWorkflowSerializer,
     OrderAutomationWorkflowsSerializer,
     UpdateAutomationWorkflowSerializer,
 )
+from baserow.contrib.automation.history.service import AutomationHistoryService
 from baserow.contrib.automation.workflows.actions import (
     CreateAutomationWorkflowActionType,
     DeleteAutomationWorkflowActionType,
@@ -39,6 +44,7 @@ from baserow.contrib.automation.workflows.exceptions import (
 from baserow.contrib.automation.workflows.job_types import (
     DuplicateAutomationWorkflowJobType,
 )
+from baserow.contrib.automation.workflows.service import AutomationWorkflowService
 from baserow.core.exceptions import ApplicationDoesNotExist
 from baserow.core.jobs.exceptions import MaxJobCountExceeded
 from baserow.core.jobs.handler import JobHandler
@@ -93,6 +99,40 @@ class AutomationWorkflowsView(APIView):
 
 
 class AutomationWorkflowView(APIView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="workflow_id",
+                location=OpenApiParameter.PATH,
+                type=OpenApiTypes.INT,
+                description="The id of the workflow.",
+            ),
+            CLIENT_SESSION_ID_SCHEMA_PARAMETER,
+        ],
+        tags=[AUTOMATION_WORKFLOWS_TAG],
+        operation_id="get_automation_workflow",
+        description="Retrieve a single workflow of an automation.",
+        responses={
+            200: AutomationWorkflowSerializer,
+            404: get_error_schema(
+                [
+                    "ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST",
+                    "ERROR_APPLICATION_DOES_NOT_EXIST",
+                ]
+            ),
+        },
+    )
+    @transaction.atomic
+    @map_exceptions(
+        {
+            ApplicationDoesNotExist: ERROR_APPLICATION_DOES_NOT_EXIST,
+            AutomationWorkflowDoesNotExist: ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST,
+        }
+    )
+    def get(self, request, workflow_id: int):
+        workflow = AutomationWorkflowService().get_workflow(request.user, workflow_id)
+        return Response(AutomationWorkflowSerializer(workflow).data)
+
     @extend_schema(
         parameters=[
             OpenApiParameter(
@@ -165,11 +205,58 @@ class AutomationWorkflowView(APIView):
             AutomationWorkflowDoesNotExist: ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST,
         }
     )
-    @transaction.atomic
     def delete(self, request, workflow_id: int):
         DeleteAutomationWorkflowActionType.do(request.user, workflow_id)
 
         return Response(status=204)
+
+
+class AutomationWorkflowHistoryView(APIView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="workflow_id",
+                location=OpenApiParameter.PATH,
+                type=OpenApiTypes.INT,
+                description="The id of the workflow.",
+            ),
+            CLIENT_SESSION_ID_SCHEMA_PARAMETER,
+        ],
+        tags=[AUTOMATION_WORKFLOWS_TAG],
+        operation_id="get_automation_workflow_history",
+        description="Retrieve the history for a workflow.",
+        responses={
+            200: get_example_pagination_serializer_class(
+                AutomationWorkflowHistorySerializer
+            ),
+            404: get_error_schema(
+                [
+                    "ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST",
+                ]
+            ),
+        },
+    )
+    @transaction.atomic
+    @map_exceptions(
+        {
+            AutomationWorkflowDoesNotExist: ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST,
+        }
+    )
+    def get(self, request, workflow_id: int):
+        queryset = AutomationHistoryService().get_workflow_history(
+            request.user, workflow_id
+        )
+
+        paginator = PageNumberPagination(
+            limit_page_size=settings.AUTOMATION_HISTORY_PAGE_SIZE_LIMIT
+        )
+        page = paginator.paginate_queryset(queryset, request, self)
+        serializer = AutomationWorkflowHistorySerializer(
+            page,
+            many=True,
+        )
+
+        return paginator.get_paginated_response(serializer.data)
 
 
 class OrderAutomationWorkflowsView(APIView):
@@ -269,4 +356,53 @@ class AsyncAutomationDuplicateWorkflowView(APIView):
         )
 
         serializer = job_type_registry.get_serializer(job, JobSerializer)
+        return Response(serializer.data, status=HTTP_202_ACCEPTED)
+
+
+class AsyncPublishAutomationWorkflowView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="workflow_id",
+                location=OpenApiParameter.PATH,
+                type=OpenApiTypes.INT,
+                description="The workflow id the user wants to publish.",
+            ),
+            CLIENT_SESSION_ID_SCHEMA_PARAMETER,
+        ],
+        tags=[AUTOMATION_WORKFLOWS_TAG],
+        operation_id="publish_automation_workflow",
+        description=(
+            "This endpoint starts an asynchronous job to publish the "
+            "automation workflow. The job clones the current version of "
+            "the given automation and publishes it for the given workflow."
+        ),
+        request=None,
+        responses={
+            202: HTTP_202_ACCEPTED,
+            400: get_error_schema(
+                [
+                    "ERROR_REQUEST_BODY_VALIDATION",
+                ]
+            ),
+            404: get_error_schema(["ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST"]),
+        },
+    )
+    @transaction.atomic
+    @map_exceptions(
+        {
+            AutomationWorkflowDoesNotExist: ERROR_AUTOMATION_WORKFLOW_DOES_NOT_EXIST,
+        }
+    )
+    def post(self, request, workflow_id: int):
+        """
+        Starts an async job to publish an automation workflow.
+        """
+
+        job = AutomationWorkflowService().async_publish(request.user, workflow_id)
+
+        serializer = job_type_registry.get_serializer(job, JobSerializer)
+
         return Response(serializer.data, status=HTTP_202_ACCEPTED)

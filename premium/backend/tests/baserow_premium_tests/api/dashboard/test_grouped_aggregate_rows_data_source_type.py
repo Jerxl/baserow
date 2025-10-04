@@ -32,7 +32,7 @@ def test_grouped_aggregate_rows_get_dashboard_data_sources(
         service=data_source1.service, field=field, aggregation_type="sum", order=1
     )
     LocalBaserowTableServiceAggregationSeries.objects.create(
-        service=data_source1.service, field=field_2, aggregation_type="sum", order=1
+        service=data_source1.service, field=field_2, aggregation_type="sum", order=2
     )
     LocalBaserowTableServiceAggregationGroupBy.objects.create(
         service=data_source1.service, field=field_3, order=1
@@ -71,8 +71,16 @@ def test_grouped_aggregate_rows_get_dashboard_data_sources(
     assert response_json[0] == {
         "aggregation_group_bys": [{"field_id": field_3.id, "order": 1}],
         "aggregation_series": [
-            {"aggregation_type": "sum", "field_id": field.id, "order": 1},
-            {"aggregation_type": "sum", "field_id": field_2.id, "order": 1},
+            {
+                "aggregation_type": "sum",
+                "field_id": field.id,
+                "id": AnyInt(),
+            },
+            {
+                "aggregation_type": "sum",
+                "field_id": field_2.id,
+                "id": AnyInt(),
+            },
         ],
         "context_data": {
             "fields": {
@@ -95,6 +103,8 @@ def test_grouped_aggregate_rows_get_dashboard_data_sources(
                     "type": "number",
                     "database_id": table.database.id,
                     "workspace_id": table.database.workspace.id,
+                    "db_index": False,
+                    "field_constraints": [],
                 },
             },
         },
@@ -118,11 +128,13 @@ def test_grouped_aggregate_rows_get_dashboard_data_sources(
         "table_id": table.id,
         "type": "local_baserow_grouped_aggregate_rows",
         "view_id": None,
+        "sample_data": None,
     }
     assert response_json[1] == {
         "context_data": None,
         "context_data_schema": None,
         "dashboard_id": dashboard.id,
+        "default_result_count": 20,
         "filter_type": "AND",
         "filters": [],
         "sortings": [],
@@ -135,6 +147,7 @@ def test_grouped_aggregate_rows_get_dashboard_data_sources(
         "table_id": None,
         "type": "local_baserow_list_rows",
         "view_id": None,
+        "sample_data": None,
     }
 
 
@@ -186,12 +199,12 @@ def test_grouped_aggregate_rows_update_data_source(api_client, premium_data_fixt
         {
             "aggregation_type": "sum",
             "field_id": field.id,
-            "order": 0,
+            "id": AnyInt(),
         },
         {
             "aggregation_type": "sum",
             "field_id": field_2.id,
-            "order": 1,
+            "id": AnyInt(),
         },
     ]
     assert response_json["aggregation_group_bys"] == [

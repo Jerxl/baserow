@@ -1,10 +1,12 @@
+from decimal import Decimal
+from typing import Iterable, List, Optional
+
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
+from django.db.models import Manager, QuerySet
 
-from baserow.contrib.automation.workflows.models import (
-    AutomationWorkflow,
-    DuplicateAutomationWorkflowJob,
-)
+from baserow.contrib.automation.workflows.models import AutomationWorkflow
+from baserow.core.db import get_unique_orders_before_item
 from baserow.core.mixins import (
     CreatedAndUpdatedOnMixin,
     FractionOrderableMixin,
@@ -15,23 +17,37 @@ from baserow.core.mixins import (
 )
 from baserow.core.services.models import Service
 
-__all__ = [
-    "AutomationNode",
-    "AutomationWorkflow",
-    "DuplicateAutomationWorkflowJob",
-]
-
 
 def get_default_node_content_type():
     return ContentType.objects.get_for_model(AutomationNode)
 
 
+class AutomationNodeTrashManager(models.Manager):
+    """
+    Manager for the AutomationNode model.
+
+    Ensure all trashed relations are excluded from the default queryset.
+    """
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .exclude(
+                models.Q(trashed=True)
+                | models.Q(workflow__trashed=True)
+                | models.Q(workflow__automation__trashed=True)
+                | models.Q(workflow__automation__workspace__trashed=True)
+            )
+        )
+
+
 class AutomationNode(
-    HierarchicalModelMixin,
     TrashableModelMixin,
-    CreatedAndUpdatedOnMixin,
-    FractionOrderableMixin,
     PolymorphicContentTypeMixin,
+    CreatedAndUpdatedOnMixin,
+    HierarchicalModelMixin,
+    FractionOrderableMixin,
     WithRegistry,
 ):
     """
@@ -41,6 +57,13 @@ class AutomationNode(
     typically have a Trigger Node and one or more Action Nodes.
     """
 
+    label = models.CharField(
+        blank=True,
+        default="",
+        db_default="",
+        max_length=75,
+        help_text="A label to use when displaying this node in a graph.",
+    )
     content_type = models.ForeignKey(
         ContentType,
         verbose_name="content type",
@@ -68,7 +91,12 @@ class AutomationNode(
         help_text="The previous automation node.",
         related_name="automation_workflow_previous_nodes",
     )
-
+    service = models.OneToOneField(
+        Service,
+        help_text="The service which this node is associated with.",
+        related_name="automation_workflow_node",
+        on_delete=models.CASCADE,
+    )
     order = models.DecimalField(
         help_text="Lowest first.",
         max_digits=40,
@@ -78,6 +106,9 @@ class AutomationNode(
     )
 
     previous_node_output = models.CharField(default="")
+
+    objects = AutomationNodeTrashManager()
+    objects_and_trash = Manager()
 
     class Meta:
         ordering = ("order", "id")
@@ -93,30 +124,144 @@ class AutomationNode(
     def get_parent(self):
         return self.workflow
 
+    def get_previous_service_outputs(self):
+        return (
+            (
+                {self.previous_node.service.id: str(self.previous_node_output)}
+                | self.previous_node.get_previous_service_outputs()
+            )
+            if self.previous_node
+            else {}
+        )
+
+    def get_next_nodes(
+        self, output_uid: str | None = None, specific: bool = False
+    ) -> Iterable["AutomationNode"]:
+        """
+        Returns all nodes which follow this node in the workflow. A list of nodes
+        is returned as there can be multiple nodes that follow this one, for example
+        when there are multiple branches in the workflow.
+
+        :param output_uid: filter nodes only for this output uid.
+        :param specific: If True, returns the specific node type.
+        """
+
+        from baserow.contrib.automation.nodes.handler import AutomationNodeHandler
+
+        return AutomationNodeHandler().get_next_nodes(
+            self.workflow, self, output_uid=output_uid, specific=specific
+        )
+
     @classmethod
     def get_last_order(cls, workflow: "AutomationWorkflow"):
         queryset = AutomationNode.objects.filter(workflow=workflow)
         return cls.get_highest_order_of_queryset(queryset)[0]
 
+    @classmethod
+    def get_unique_order_before_node(
+        cls, before: "AutomationNode", parent_node_id: Optional[int]
+    ) -> Decimal:
+        """
+        Returns a safe order value before the given node in the given workflow.
 
-class AutomationServiceNode(AutomationNode):
-    service = models.ForeignKey(
-        Service,
-        help_text="The service which this action is associated with.",
-        on_delete=models.CASCADE,
-    )
+        :param before: The node before which we want the safe order
+        :param parent_node_id: The id of the parent node.
+        :raises CannotCalculateIntermediateOrder: If it's not possible to find an
+            intermediate order. The full order of the items must be recalculated in this
+            case before calling this method again.
+        :return: The order value.
+        """
 
+        queryset = AutomationNode.objects.filter(workflow=before.workflow).filter(
+            parent_node_id=parent_node_id
+        )
+
+        return cls.get_unique_orders_before_item(before, queryset)[0]
+
+    @classmethod
+    def get_unique_orders_before_item(
+        cls,
+        before: Optional[models.Model],
+        queryset: QuerySet,
+        amount: int = 1,
+        field: str = "order",
+    ) -> List[Decimal]:
+        """
+        Calculates a list of unique decimal orders that can safely be used before the
+        provided `before` item.
+
+        :param before: The model instance where the before orders must be
+            calculated for.
+        :param queryset: The base queryset used to compute the value.
+        :param amount: The number of orders that must be requested. Can be higher if
+            multiple items are inserted or moved.
+        :param field: The order field name.
+        :raises CannotCalculateIntermediateOrder: If it's not possible to find an
+            intermediate order. The full order of the items must be recalculated in this
+            case before calling this method again.
+        :return: A list of decimals containing safe to use orders in order.
+        """
+
+        return get_unique_orders_before_item(before, queryset, amount, field=field)
+
+
+class AutomationActionNode(AutomationNode):
     class Meta:
         abstract = True
 
 
-class LocalBaserowRowCreatedTriggerNode(AutomationServiceNode):
-    def save(self, *args, **kwargs):
-        """TODO: this shouldn't be required. There seems to be a MRO issue."""
-
-        self._ensure_content_type_is_set()
-        super().save(*args, **kwargs)
+class AutomationTriggerNode(AutomationNode):
+    class Meta:
+        abstract = True
 
 
-class LocalBaserowCreateRowActionNode(AutomationServiceNode):
+class LocalBaserowRowsCreatedTriggerNode(AutomationTriggerNode):
+    ...
+
+
+class LocalBaserowRowsUpdatedTriggerNode(AutomationTriggerNode):
+    ...
+
+
+class LocalBaserowRowsDeletedTriggerNode(AutomationTriggerNode):
+    ...
+
+
+class CorePeriodicTriggerNode(AutomationTriggerNode):
+    ...
+
+
+class LocalBaserowCreateRowActionNode(AutomationActionNode):
+    ...
+
+
+class LocalBaserowUpdateRowActionNode(AutomationActionNode):
+    ...
+
+
+class LocalBaserowDeleteRowActionNode(AutomationActionNode):
+    ...
+
+
+class LocalBaserowGetRowActionNode(AutomationActionNode):
+    ...
+
+
+class LocalBaserowListRowsActionNode(AutomationActionNode):
+    ...
+
+
+class LocalBaserowAggregateRowsActionNode(AutomationActionNode):
+    ...
+
+
+class CoreHTTPRequestActionNode(AutomationActionNode):
+    ...
+
+
+class CoreSMTPEmailActionNode(AutomationActionNode):
+    ...
+
+
+class CoreRouterActionNode(AutomationActionNode):
     ...

@@ -150,6 +150,14 @@ class Element(
         help_text="The theme overrides for this element",
     )
 
+    css_classes = models.CharField(
+        max_length=255,
+        default="",
+        db_default="",
+        blank=True,
+        help_text="The additional CSS classes for this element.",
+    )
+
     style_border_top_color = models.CharField(
         max_length=COLOR_FIELD_MAX_LENGTH,
         default="border",
@@ -770,8 +778,7 @@ class CollectionField(models.Model):
     uid = models.UUIDField(default=uuid.uuid4)
     order = models.PositiveIntegerField()
     name = models.CharField(
-        max_length=225,
-        help_text="The name of the field.",
+        max_length=225, help_text="The name of the field.", blank=True
     )
 
     type = models.CharField(
@@ -821,7 +828,6 @@ class CollectionElement(Element):
         help_text="The amount item loaded with each page.",
         validators=[
             MinValueValidator(1, message="Value cannot be less than 1."),
-            MaxValueValidator(100, message="Value cannot be greater than 100."),
         ],
     )
 

@@ -1445,9 +1445,13 @@ class CoreHandler(metaclass=baserow_trace_methods(tracer)):
         allowed_values = extract_allowed(
             kwargs, self.default_create_allowed_fields + application_type.allowed_fields
         )
+        prepared_values = application_type.prepare_value_for_db(allowed_values)
+
         application = application_type.create_application(
-            user, workspace, init_with_data=init_with_data, **allowed_values
+            user, workspace, init_with_data=init_with_data, **prepared_values
         )
+
+        application_type.after_create(application, kwargs)
 
         application_created.send(self, application=application, user=user)
         return application
@@ -1493,14 +1497,21 @@ class CoreHandler(metaclass=baserow_trace_methods(tracer)):
         allowed_values = extract_allowed(
             kwargs, self.default_update_allowed_fields + application_type.allowed_fields
         )
+        prepared_values = application_type.prepare_value_for_db(
+            allowed_values, application
+        )
+
         original_allowed_values = {
             allowed_value: getattr(application, allowed_value)
-            for allowed_value in allowed_values
+            for allowed_value in prepared_values
         }
-        for key, value in allowed_values.items():
+
+        for key, value in prepared_values.items():
             setattr(application, key, value)
 
         application.save()
+
+        application_type.after_update(application, kwargs)
 
         application_updated.send(self, application=application, user=user)
 
@@ -1660,7 +1671,9 @@ class CoreHandler(metaclass=baserow_trace_methods(tracer)):
         )
 
         application_id = application.id
-        TrashHandler.trash(user, application.workspace, application, application)
+        TrashHandler.trash(
+            user, application.workspace, application, application.specific
+        )
 
         application_deleted.send(
             self, application_id=application_id, application=application, user=user
@@ -1750,19 +1763,6 @@ class CoreHandler(metaclass=baserow_trace_methods(tracer)):
         )
 
         storage = storage or get_default_storage()
-
-        # Sort the serialized applications so that we import:
-        # Database first
-        # Applications second
-        # Everything else after that.
-        def application_priority_sort(application_to_sort):
-            return application_type_registry.get(
-                application_to_sort["type"]
-            ).import_application_priority
-
-        prioritized_applications = sorted(
-            exported_applications, key=application_priority_sort, reverse=True
-        )
 
         # Sort the serialized applications so that we import:
         # Database first

@@ -36,6 +36,9 @@
             @change="$emit('updated-field-options', { name: $event.value })"
             @editing="editingName = $event"
           ></Editable>
+          <span v-if="fieldOptions.required" class="form-view__field-required">
+            *
+          </span>
           <a
             v-if="!readOnly"
             class="form-view__edit form-view-field-edit"
@@ -68,7 +71,10 @@
             <i class="form-view__edit-icon iconoir-edit-pencil"></i
           ></a>
         </div>
-        <p v-if="cannotSubmitValues" class="error form-view__field-read-only">
+        <p
+          v-if="!readOnly && cannotSubmitValues"
+          class="error form-view__field-read-only"
+        >
           <i class="iconoir-warning-triangle"></i>
           {{ $t('formViewField.cannotSumitValues') }}
         </p>
@@ -88,7 +94,7 @@
         />
         <div class="form-view__field-options">
           <FormGroup
-            v-if="Object.keys(fieldComponents).length > 1"
+            v-if="Object.keys(fieldComponents).length > 1 && !readOnly"
             horizontal
             :label="$t('formViewField.showFieldAs')"
             required
@@ -284,6 +290,14 @@ export default {
         this.resetValue()
       },
     },
+    preparedFieldForEditInputComponent: {
+      deep: true,
+      handler() {
+        this.$nextTick(() => {
+          this.resetValue()
+        })
+      },
+    },
   },
   created() {
     this.resetValue()
@@ -320,7 +334,9 @@ export default {
       return this.$registry.get('field', this.field.type)
     },
     resetValue() {
-      this.value = this.getFieldType().getDefaultValue(this.field)
+      this.value = this.getFieldType().getDefaultValue(
+        this.preparedFieldForEditInputComponent
+      )
     },
     createConditionGroup(parentGroupId) {
       return {

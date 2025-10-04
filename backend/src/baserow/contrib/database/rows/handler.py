@@ -2,6 +2,7 @@ from collections import defaultdict
 from copy import deepcopy
 from decimal import Decimal
 from functools import cached_property
+from itertools import chain
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -19,7 +20,7 @@ from typing import (
 from django import db
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction
+from django.db import connection, router, transaction
 from django.db.models import Field as DjangoField
 from django.db.models import Model, Q, QuerySet, Window
 from django.db.models.expressions import RawSQL
@@ -30,11 +31,13 @@ from django.utils.encoding import force_str
 from celery.utils import chunks
 from opentelemetry import metrics, trace
 
+from baserow.contrib.database.field_rules.handlers import FieldRuleHandler
 from baserow.contrib.database.fields.dependencies.handler import FieldDependencyHandler
 from baserow.contrib.database.fields.dependencies.update_collector import (
     FieldUpdateCollector,
 )
 from baserow.contrib.database.fields.exceptions import (
+    FieldDataConstraintException,
     FieldNotInTable,
     IncompatibleField,
 )
@@ -46,7 +49,6 @@ from baserow.contrib.database.search.handler import SearchHandler
 from baserow.contrib.database.table.constants import (
     CREATED_BY_COLUMN_NAME,
     LAST_MODIFIED_BY_COLUMN_NAME,
-    ROW_NEEDS_BACKGROUND_UPDATE_COLUMN_NAME,
 )
 from baserow.contrib.database.table.models import (
     FieldObject,
@@ -66,7 +68,7 @@ from baserow.core.db import (
 )
 from baserow.core.exceptions import CannotCalculateIntermediateOrder, PermissionDenied
 from baserow.core.handler import CoreHandler
-from baserow.core.psycopg import sql
+from baserow.core.psycopg import is_unique_violation_error, sql
 from baserow.core.telemetry.utils import baserow_trace_methods
 from baserow.core.trash.handler import TrashHandler
 from baserow.core.trash.registries import trash_item_type_registry
@@ -83,6 +85,7 @@ from .operations import (
     UpdateDatabaseRowOperationType,
 )
 from .signals import (
+    before_rows_create,
     before_rows_delete,
     before_rows_update,
     row_orders_recalculated,
@@ -780,6 +783,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             without any further check.
         :param send_webhook_events: If set the false then the webhooks will not be
             triggered. Defaults to true.
+        :raises FieldDataConstraintException: When a field data constraint is violated.
         :return: The created row instance.
         :rtype: Model
         """
@@ -805,6 +809,10 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         else:
             prepared_values = values
 
+        before_return = before_rows_create.send(
+            self, user=user, table=table, model=model
+        )
+
         row_values, manytomany_values = self.extract_manytomany_values(
             prepared_values, model
         )
@@ -818,8 +826,20 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                 user if user and user.id else None
             )
 
-        instance = model.objects.create(**row_values)
-        rows_created_counter.add(1)
+        field_rules_handler = FieldRuleHandler(table, user)
+
+        field_rules_handler.on_rows_create([row_values])
+        instance = model(**row_values)
+        field_rules_handler.validate_row(instance)
+
+        try:
+            instance.save(force_insert=True)
+            rows_created_counter.add(1)
+        except Exception as exc:
+            if is_unique_violation_error(exc):
+                raise FieldDataConstraintException()
+            else:
+                raise exc
 
         m2m_change_tracker = RowM2MChangeTracker()
         for field_name, value in manytomany_values.items():
@@ -834,8 +854,17 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             )
             getattr(instance, field_name).through.objects.bulk_create(m2m_objects)
 
+        cascade_update = field_rules_handler.collector.get_processed_rows()
+
         fields, dependant_fields = self.update_dependencies_of_rows_created(
             model, [instance]
+        )
+
+        self.update_dependencies_of_rows_updated(
+            table=table,
+            model=model,
+            updated_rows=cascade_update.updated_rows,
+            updated_field_ids=cascade_update.field_ids,
         )
 
         if model.fields_requiring_refresh_after_insert():
@@ -846,7 +875,17 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         from baserow.contrib.database.views.handler import ViewHandler
 
         ViewHandler().field_value_updated(fields + dependant_fields)
-        SearchHandler.field_value_updated_or_created(table)
+        SearchHandler.schedule_update_search_data(
+            table, row_ids=[instance.id] + cascade_update.row_ids
+        )
+
+        if cascade_update.row_ids:
+            updated_rows = list(
+                model.objects.all()
+                .enhance_by_fields()
+                .filter(id__in=list(cascade_update.row_ids))
+            )
+            cascade_update.updated_rows = updated_rows
 
         rows_created.send(
             self,
@@ -861,6 +900,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             m2m_change_tracker=m2m_change_tracker,
             fields=fields,
             dependant_fields=dependant_fields,
+            before_return=before_return,
         )
 
         return instance
@@ -957,6 +997,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             and validated for every field and can be used directly by the handler
             without any further check.
         :raises RowDoesNotExist: When the row with the provided id does not exist.
+        :raises FieldDataConstraintException: When a field data constraint is violated.
         :return: The updated row instance.
         """
 
@@ -1027,7 +1068,13 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             setattr(row, LAST_MODIFIED_BY_COLUMN_NAME, user if user.id else None)
             always_updated_fields.append(LAST_MODIFIED_BY_COLUMN_NAME)
 
-        row.save(update_fields=update_row_fields + always_updated_fields)
+        try:
+            row.save(update_fields=update_row_fields + always_updated_fields)
+        except Exception as exc:
+            if is_unique_violation_error(exc):
+                raise FieldDataConstraintException()
+            else:
+                raise exc
         rows_updated_counter.add(1)
 
         dependant_fields = self.update_dependencies_of_rows_updated(
@@ -1041,7 +1088,11 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         from baserow.contrib.database.views.handler import ViewHandler
 
         ViewHandler().field_value_updated(updated_fields + dependant_fields)
-        SearchHandler.field_value_updated_or_created(table)
+        SearchHandler.schedule_update_search_data(
+            table,
+            fields=[f for f in updated_fields if f.id in updated_field_ids],
+            row_ids=[row.id],
+        )
 
         rows_updated.send(
             self,
@@ -1133,6 +1184,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_webhook_events: bool = True,
         generate_error_report: bool = False,
         skip_search_update: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> CreatedRowsData:
         """
         Creates new rows for a given table without checking permissions. It also calls
@@ -1153,12 +1205,16 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         :param skip_search_update: If you want to instead trigger the search handler
             cells update later on after many create_rows calls then set this to True
             but make sure you trigger it eventually.
+        :param signal_params: Additional parameters that are added to the signal.
         :return: The created row instances.
 
         """
 
         if model is None:
             model = table.get_model()
+
+        if signal_params is None:
+            signal_params = {}
 
         user_id = user and user.id
 
@@ -1177,6 +1233,13 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         )
         report.update({index: err for index, err in errors.items()})
 
+        before_return = before_rows_create.send(
+            self, user=user, table=table, model=model
+        )
+
+        field_rules_handler = FieldRuleHandler(table, user)
+        field_rules_handler.on_rows_create(prepared_rows_values)
+
         rows_relationships = []
         for index, row in enumerate(
             prepared_rows_values, start=-len(prepared_rows_values)
@@ -1191,6 +1254,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                 row_values[LAST_MODIFIED_BY_COLUMN_NAME] = user if user_id else None
 
             instance = model(**row_values)
+            field_rules_handler.validate_row(instance)
 
             relations = {
                 field_name: value
@@ -1205,10 +1269,30 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             # saved.
             instance._m2m_values = relations
 
-        inserted_rows = model.objects.bulk_create(
-            [row for (row, _) in rows_relationships]
-        )
-        rows_created_counter.add(len(rows_relationships))
+        cascade_updated = field_rules_handler.collector.get_processed_rows()
+
+        rows = [row for (row, _) in rows_relationships]
+
+        try:
+            with transaction.atomic():
+                inserted_rows = model.objects.bulk_create(rows)
+        except Exception as exc:
+            inserted_rows = []
+            if is_unique_violation_error(exc):
+                if not generate_error_report:
+                    raise FieldDataConstraintException()
+
+                for index, (row, _) in enumerate(rows_relationships):
+                    report[index] = {
+                        "non_field_errors": [
+                            "Row was not inserted due to conflicts or constraints"
+                        ]
+                    }
+            else:
+                raise exc
+
+        inserted_rows_count = len(inserted_rows)
+        rows_created_counter.add(inserted_rows_count)
 
         many_to_many = defaultdict(list)
         m2m_change_tracker = RowM2MChangeTracker()
@@ -1238,9 +1322,24 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         from baserow.contrib.database.views.handler import ViewHandler
 
         updated_fields = [o["field"] for o in model._field_objects.values()]
+        updated_field_ids = [f.id for f in updated_fields]
+
         ViewHandler().field_value_updated(updated_fields + dependant_fields)
         if not skip_search_update:
-            SearchHandler.field_value_updated_or_created(table)
+            SearchHandler.schedule_update_search_data(
+                table,
+                fields=updated_fields,
+                row_ids=[r.id for r in inserted_rows] + list(cascade_updated.row_ids),
+            )
+
+        if cascade_updated.row_ids:
+            cascade_updated.field_ids.update(updated_field_ids)
+            updated_rows = list(
+                model.objects.all()
+                .enhance_by_fields()
+                .filter(id__in=list(cascade_updated.row_ids))
+            )
+            cascade_updated.updated_rows = updated_rows
 
         rows_to_return = inserted_rows
         rows_values_refreshed_from_db = False
@@ -1272,9 +1371,13 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                 m2m_change_tracker=m2m_change_tracker,
                 fields=updated_fields,
                 dependant_fields=dependant_fields,
+                before_return=before_return,
+                **signal_params,
             )
 
-        return CreatedRowsData(rows_to_return, report)
+        return CreatedRowsData(
+            rows_to_return, report, updated_field_ids, cascade_updated
+        )
 
     def create_rows(
         self,
@@ -1287,6 +1390,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_webhook_events: bool = True,
         generate_error_report: bool = False,
         skip_search_update: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> CreatedRowsData:
         """
         Creates new rows for a given table if the user
@@ -1307,9 +1411,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         :param skip_search_update: If you want to instead trigger the search handler
             cells update later on after many create_rows calls then set this to True
             but make sure you trigger it eventually.
-        :param values_already_prepared: Whether or not the values are already sanitized
-            and validated for every field and can be used directly by the handler
-            without any further check.
+        :param signal_params: Additional parameters that are added to the signal.
         :return: The created row instances.
 
         """
@@ -1337,6 +1439,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             send_webhook_events,
             generate_error_report,
             skip_search_update,
+            signal_params=signal_params,
         )
 
     def update_dependencies_of_rows_created(
@@ -1506,6 +1609,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         rows_values: List[Dict[str, Any]],
         progress: Optional[Progress] = None,
         model: Optional[Type[GeneratedTableModel]] = None,
+        signal_params: Optional[Dict] = None,
     ) -> Tuple[List[GeneratedTableModel], Dict[str, Dict[str, Any]]]:
         """
         Creates rows by batch and generates an error report instead of failing on first
@@ -1532,7 +1636,12 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         all_created_rows = []
         for count, chunk in enumerate(grouper(BATCH_SIZE, rows_values)):
             row_start_index = count * BATCH_SIZE
-            created_rows, creation_report = self.create_rows(
+            (
+                created_rows,
+                creation_report,
+                field_ids,
+                cascade_update,
+            ) = self.force_create_rows(
                 user=user,
                 table=table,
                 model=model,
@@ -1543,6 +1652,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                 # Don't trigger loads of search updates for every batch of rows we
                 # create but instead a single one for this entire table at the end.
                 skip_search_update=True,
+                signal_params=signal_params,
             )
 
             for valid_index, field_errors in creation_report.items():
@@ -1555,7 +1665,9 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
 
             all_created_rows += created_rows
 
-        SearchHandler.field_value_updated_or_created(table)
+        SearchHandler.schedule_update_search_data(
+            table, row_ids=[r.id for r in all_created_rows]
+        )
 
         return all_created_rows, report
 
@@ -1566,21 +1678,26 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         rows_values: List[Dict[str, Any]],
         progress: Progress,
         model: Optional[Type[GeneratedTableModel]] = None,
+        signal_params: Optional[Dict] = None,
     ) -> Tuple[List[Dict[str, Any] | None], Dict[str, Dict[str, Any]]]:
         """
-        Creates rows by batch and generates an error report instead of failing on first
-        error.
+        Updates rows by batch and generates an error report instead of failing on first
+        error. If bulk update fails, falls back to individual row updates.
 
-        :param user: The user of whose behalf the rows are created.
-        :param table: The table for which the rows should be created.
-        :param rows_values: List of rows values for rows that need to be created.
+        :param user: The user of whose behalf the rows are updated.
+        :param table: The table for which the rows should be updated.
+        :param rows_values: List of rows values for rows that need to be updated.
         :param progress: Give a progress instance to track the progress of the import.
         :param model: Optional model to prevent recomputing table model.
-        :return: The created rows and the error report.
+        :param signal_params: Additional parameters that are added to the signal.
+        :return: The updated rows and the error report.
         """
 
         if not rows_values:
             return [], {}
+
+        if signal_params is None:
+            signal_params = {}
 
         progress.increment(state=ROW_IMPORT_CREATION)
 
@@ -1590,25 +1707,36 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         report = {}
         all_updated_rows = []
         for count, chunk in enumerate(grouper(BATCH_SIZE, rows_values)):
-            updated_rows = self.force_update_rows(
-                user=user,
-                table=table,
-                model=model,
-                rows_values=chunk,
-                send_realtime_update=False,
-                send_webhook_events=False,
-                # Don't trigger loads of search updates for every batch of rows we
-                # create but instead a single one for this entire table at the end.
-                skip_search_update=True,
-                generate_error_report=True,
-            )
+            row_start_index = count * BATCH_SIZE
+
+            try:
+                with transaction.atomic():
+                    result = self.force_update_rows(
+                        user=user,
+                        table=table,
+                        model=model,
+                        rows_values=chunk,
+                        send_realtime_update=False,
+                        send_webhook_events=False,
+                        generate_error_report=True,
+                        signal_params=signal_params,
+                    )
+                    report.update(result.errors)
+                    all_updated_rows.extend(result.updated_rows)
+            except Exception as exc:
+                if is_unique_violation_error(exc):
+                    for index, _ in enumerate(chunk):
+                        report[row_start_index + index] = {
+                            "non_field_errors": [
+                                "Row was not updated due to conflicts or constraints"
+                            ]
+                        }
+                else:
+                    raise exc
 
             if progress:
                 progress.increment(len(chunk))
-            report.update(updated_rows.errors)
-            all_updated_rows.extend(updated_rows.updated_rows)
 
-        SearchHandler.field_value_updated_or_created(table)
         return all_updated_rows, report
 
     def import_rows(
@@ -1663,6 +1791,15 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         # Pre-run upsert configuration validation.
         # Can raise InvalidRowLength
         update_handler.validate()
+
+        skipped_field_ids = configuration.get("skipped_fields", []) or []
+        try:
+            skipped_fields = [
+                model.get_field_object_by_id(field_id)["field"]
+                for field_id in skipped_field_ids
+            ]
+        except ValueError:
+            raise FieldNotInTable("The field ID is not found in the table.")
 
         fields = [
             field_object["field"]
@@ -1743,11 +1880,23 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         rows_values_to_create = []
         rows_values_to_update = []
         if update_map:
+            skipped_field_names = set()
+
+            if skipped_fields:
+                skipped_field_names = {field.db_column for field in skipped_fields}
+
             for current_idx, import_idx in original_row_index_mapping.items():
                 row = valid_rows[current_idx]
                 if update_idx := update_map.get(import_idx):
-                    row["id"] = update_idx
-                    rows_values_to_update.append(row)
+                    # For upsert operations, filter out skipped fields that were
+                    # explicitly marked to be ignored during import. This ensures
+                    # that existing values in those fields are preserved in the
+                    # database rather than being overwritten.
+                    filtered_row = {
+                        k: v for k, v in row.items() if k not in skipped_field_names
+                    }
+                    filtered_row["id"] = update_idx
+                    rows_values_to_update.append(filtered_row)
                 else:
                     rows_values_to_create.append(row)
         else:
@@ -1898,6 +2047,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_webhook_events: bool = True,
         skip_search_update: bool = False,
         generate_error_report: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> UpdatedRowsData:
         """
         Updates field values in batch based on provided rows with the new
@@ -1919,12 +2069,17 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             cells update later on after many create_rows calls then set this to True
             but make sure you trigger it eventually.
         :param generate_error_report: Generate error report if set to True.
+        :param signal_params: Additional parameters that are added to the signal.
         :raises RowIdsNotUnique: When trying to update the same row multiple
             times.
         :raises RowDoesNotExist: When any of the rows don't exist.
+        :raises FieldDataConstraintException: When a field data constraint is violated.
         :return: An UpdatedRow named tuple containing the updated rows
             instances, the original row values and the updated fields metadata.
         """
+
+        if signal_params is None:
+            signal_params = {}
 
         if model is None:
             model = table.get_model()
@@ -1982,7 +2137,13 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             table=table,
             model=model,
             updated_field_ids=updated_field_ids,
+            updated_rows_values=prepared_rows_values_by_id,
         )
+
+        from baserow.contrib.database.field_rules.handlers import FieldRuleHandler
+
+        field_rules_handler = FieldRuleHandler(table, user)
+        field_rules_handler.on_rows_updated(rows_to_update, prepared_rows_values_by_id)
 
         field_objects_to_always_update = model.get_field_objects_to_always_update()
         rows_relationships = []
@@ -1997,9 +2158,6 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             # be updated correctly.
             for field_object in field_objects_to_always_update:
                 updated_field_ids.add(field_object["field"].id)
-
-            if table.needs_background_update_column_added:
-                setattr(obj, ROW_NEEDS_BACKGROUND_UPDATE_COLUMN_NAME, True)
 
             prepared_values = prepared_rows_values_by_id[obj.id]
             row_values, manytomany_values = self.extract_manytomany_values(
@@ -2031,6 +2189,8 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                     field_name,
                     model._meta.get_field(field_name).pre_save(obj, add=False),
                 )
+
+            field_rules_handler.validate_row(obj)
 
         m2m_values_to_add = defaultdict(list)
         m2m_values_to_delete = {}
@@ -2092,7 +2252,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         for field_name, q_filters in m2m_values_to_delete.items():
             through = getattr(model, field_name).through
             delete_qs = through.objects.all().filter(q_filters)
-            delete_qs._raw_delete(delete_qs.db)
+            delete_qs._raw_delete(using=router.db_for_write(delete_qs.model))
 
         for field_name, m2m_to_add in m2m_values_to_add.items():
             through = getattr(model, field_name).through
@@ -2100,6 +2260,11 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             through.objects.bulk_create(m2m_to_add)
 
         bulk_update_fields = ["updated_on"]
+        if field_rules_handler.has_field_rules():
+            bulk_update_fields.append(FieldRuleHandler.STATE_COLUMN_NAME)
+        updated_field_ids.update(
+            field_rules_handler.collector.starting_rows_updated_field_ids
+        )
 
         # Add always update fields to update also fields that are trashed
         for field_object in field_objects_to_always_update:
@@ -2108,8 +2273,6 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         if getattr(model, LAST_MODIFIED_BY_COLUMN_NAME, None):
             bulk_update_fields.append(LAST_MODIFIED_BY_COLUMN_NAME)
 
-        if table.needs_background_update_column_added:
-            bulk_update_fields.append(ROW_NEEDS_BACKGROUND_UPDATE_COLUMN_NAME)
         for field_obj in model._field_objects.values():
             field_id = field_obj["field"].id
             field_name = field_obj["name"]
@@ -2123,25 +2286,79 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
                 bulk_update_fields.append(field_name)
 
         if len(bulk_update_fields) > 0:
-            model.objects.bulk_update(
-                rows_to_update, bulk_update_fields, batch_size=2000
-            )
+            try:
+                model.objects.bulk_update(
+                    rows_to_update, bulk_update_fields, batch_size=2000
+                )
+            except Exception as exc:
+                if is_unique_violation_error(exc):
+                    if generate_error_report:
+                        for idx, row in enumerate(rows_to_update):
+                            report[idx] = {
+                                "non_field_errors": [
+                                    "Row was not updated due to conflicts or constraints"
+                                ]
+                            }
+                        return UpdatedRowsData(
+                            [],
+                            [],
+                            original_row_values_by_id,
+                            fields_metadata_by_row_id,
+                            report,
+                            [],
+                        )
+                    raise FieldDataConstraintException()
+                else:
+                    raise exc
+
             rows_updated_counter.add(len(rows_to_update))
 
+        cascade_updated = field_rules_handler.collector.get_processed_rows()
+
+        cascade_fields = [
+            f.db_column for f in model.get_fields() if f.id in cascade_updated.field_ids
+        ]
+
+        if cascade_updated.updated_rows:
+            model.objects.bulk_update(cascade_updated.updated_rows, cascade_fields)
+
         dependant_fields = self.update_dependencies_of_rows_updated(
-            table, rows_to_update, model, updated_field_ids, m2m_change_tracker
+            table,
+            list(rows_to_update) + cascade_updated.updated_rows,
+            model,
+            updated_field_ids.union(cascade_updated.field_ids),
+            m2m_change_tracker,
         )
 
         from baserow.contrib.database.views.handler import ViewHandler
 
         ViewHandler().field_value_updated(updated_fields + dependant_fields)
         if not skip_search_update:
-            SearchHandler.field_value_updated_or_created(table)
+            SearchHandler.schedule_update_search_data(
+                table,
+                fields=[f for f in updated_fields if f.id in updated_field_ids],
+                row_ids=row_ids + list(cascade_updated.row_ids),
+            )
 
         # Reload rows from the database to get the updated values for formulas
-        updated_rows_to_return = list(
-            model.objects.all().enhance_by_fields().filter(id__in=row_ids)
-        )
+        updated_rows_to_return = []
+        cascade_updated_rows = []
+
+        for row in (
+            model.objects.all()
+            .enhance_by_fields()
+            .filter(id__in=list(set(chain(row_ids, cascade_updated.row_ids))))
+        ):
+            if row.id in row_ids:
+                updated_rows_to_return.append(row)
+            if row.id in cascade_updated.row_ids:
+                cascade_updated_rows.append(row)
+
+        if cascade_updated.updated_rows:
+            cascade_updated.field_ids.update(updated_field_ids)
+
+            # replace updated rows with fresh versions with formula values
+            cascade_updated.updated_rows = cascade_updated_rows
 
         rows_updated.send(
             self,
@@ -2156,17 +2373,22 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             send_webhook_events=send_webhook_events,
             fields=[f for f in updated_fields if f.id in updated_field_ids],
             dependant_fields=dependant_fields,
+            cascade_update=cascade_updated,
+            **signal_params,
         )
 
         fields_metadata_by_row_id = self.get_fields_metadata_for_rows(
             updated_rows_to_return, updated_fields, fields_metadata_by_row_id
         )
+
         updated_rows_values = [
             {
                 "id": updated_row.id,
                 **self.get_internal_values_for_fields(updated_row, updated_field_ids),
             }
+            # split updated rows from cascade update rows
             for updated_row in updated_rows_to_return
+            if updated_row.id in row_ids
         ]
         updated_rows = UpdatedRowsData(
             updated_rows_to_return,
@@ -2174,6 +2396,8 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             original_row_values_by_id,
             fields_metadata_by_row_id,
             report,
+            updated_field_ids.union(cascade_updated.field_ids),
+            cascade_update=cascade_updated,
         )
 
         return updated_rows
@@ -2189,6 +2413,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_webhook_events: bool = True,
         skip_search_update: bool = False,
         generate_error_report: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> UpdatedRowsData:
         """
         Updates field values in batch based on provided rows with the new
@@ -2208,7 +2433,9 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             triggered. Defaults to true.
         :param skip_search_update: If you want to instead trigger the search handler
             cells update later on after many create_rows calls then set this to True
-            but make sure you trigger it eventually.
+            but make sure you trigger it eventually.'
+        :param generate_error_report: @TODO
+        :param signal_params: Additional parameters that are added to the signal.
         :raises RowIdsNotUnique: When trying to update the same row multiple
             times.
         :raises RowDoesNotExist: When any of the rows don't exist.
@@ -2238,6 +2465,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             send_webhook_events,
             skip_search_update,
             generate_error_report=generate_error_report,
+            signal_params=signal_params,
         )
 
     def _extract_field_ids_from_row_values(
@@ -2355,7 +2583,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         )
 
         row.order = self.get_unique_orders_before_row(before_row, model)[0]
-        row.save()
+        row.save(update_fields=["order", "updated_on"])
 
         # All fields must be marked as updated because the lookup fields can depend
         # on the row order. Only fields that are specifically marked as
@@ -2513,26 +2741,36 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             updated_fields.append(field)
 
         dependant_fields = []
-        for (
-            dependant_field,
-            dependant_field_type,
-            path_to_starting_table,
-        ) in FieldDependencyHandler.get_all_dependent_fields_with_type(
-            table.id,
-            updated_field_ids,
-            field_cache,
-            associated_relations_changed=True,
-            database_id_prefilter=table.database_id,
-        ):
-            dependant_fields.append(dependant_field)
-            dependant_field_type.row_of_dependency_deleted(
-                dependant_field,
-                row,
-                update_collector,
+
+        # Get dependent fields grouped by their dependency level to ensure
+        # correct update order
+        all_dependent_fields_grouped_by_level = (
+            FieldDependencyHandler.group_all_dependent_fields_by_level(
+                table.id,
+                updated_field_ids,
                 field_cache,
-                path_to_starting_table,
+                associated_relations_changed=True,
+                database_id_prefilter=table.database_id,
             )
-        update_collector.apply_updates_and_get_updated_fields(field_cache)
+        )
+
+        for dependent_fields_level in all_dependent_fields_grouped_by_level:
+            for (
+                dependant_field,
+                dependant_field_type,
+                path_to_starting_table,
+            ) in dependent_fields_level:
+                dependant_fields.append(dependant_field)
+
+                dependant_field_type.row_of_dependency_deleted(
+                    dependant_field,
+                    row,
+                    update_collector,
+                    field_cache,
+                    path_to_starting_table,
+                )
+
+            update_collector.apply_updates_and_get_updated_fields(field_cache)
         return updated_fields, dependant_fields
 
     def delete_rows(
@@ -2544,6 +2782,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_realtime_update: bool = True,
         send_webhook_events: bool = True,
         permanently_delete: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> TrashedRows:
         """
         Trashes existing rows of the given table based on row_ids.
@@ -2559,6 +2798,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             triggered. Defaults to true.
         :param permanently_delete: If `true` the rows will be permanently deleted
             instead of trashed.
+        :param signal_params: Additional parameters that are added to the signal.
         """
 
         workspace = table.database.workspace
@@ -2576,6 +2816,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             send_realtime_update=send_realtime_update,
             send_webhook_events=send_webhook_events,
             permanently_delete=permanently_delete,
+            signal_params=signal_params,
         )
 
     def force_delete_rows(
@@ -2587,6 +2828,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         send_realtime_update: bool = True,
         send_webhook_events: bool = True,
         permanently_delete: bool = False,
+        signal_params: Optional[Dict] = None,
     ) -> TrashedRows:
         """
         Trashes existing rows of the given table based on row_ids, without checking
@@ -2603,8 +2845,12 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             triggered. Defaults to true.
         :param permanently_delete: If `true` the rows will be permanently deleted
             instead of trashed.
+        :param signal_params: Additional parameters that are added to the signal.
         :raises RowDoesNotExist: When the row with the provided id does not exist.
         """
+
+        if signal_params is None:
+            signal_params = {}
 
         workspace = table.database.workspace
         if model is None:
@@ -2654,26 +2900,32 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
         field_cache = FieldCache()
         field_cache.cache_model(model)
         dependant_fields = []
-        for (
-            dependant_field,
-            dependant_field_type,
-            path_to_starting_table,
-        ) in FieldDependencyHandler.get_all_dependent_fields_with_type(
-            table.id,
-            updated_field_ids,
-            field_cache,
-            associated_relations_changed=True,
-            database_id_prefilter=table.database_id,
-        ):
-            dependant_fields.append(dependant_field)
-            dependant_field_type.row_of_dependency_deleted(
-                dependant_field,
-                rows,
-                update_collector,
+
+        all_dependent_fields_grouped_by_level = (
+            FieldDependencyHandler.group_all_dependent_fields_by_level_from_fields(
+                updated_fields,
                 field_cache,
-                path_to_starting_table,
+                associated_relations_changed=True,
+                database_id_prefilter=table.database_id,
             )
-        update_collector.apply_updates_and_get_updated_fields(field_cache)
+        )
+
+        for dependent_fields_level in all_dependent_fields_grouped_by_level:
+            for (
+                table_id,
+                dependant_field,
+                path_to_starting_table,
+            ) in dependent_fields_level:
+                dependant_fields.append(dependant_field)
+                dependant_field_type = field_type_registry.get_by_model(dependant_field)
+                dependant_field_type.row_of_dependency_deleted(
+                    dependant_field,
+                    rows,
+                    update_collector,
+                    field_cache,
+                    path_to_starting_table,
+                )
+            update_collector.apply_updates_and_get_updated_fields(field_cache)
 
         from baserow.contrib.database.views.handler import ViewHandler
 
@@ -2690,6 +2942,7 @@ class RowHandler(metaclass=baserow_trace_methods(tracer)):
             send_webhook_events=send_webhook_events,
             fields=updated_fields,
             dependant_fields=dependant_fields,
+            **signal_params,
         )
 
         return trashed_rows

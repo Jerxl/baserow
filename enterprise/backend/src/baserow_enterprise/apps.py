@@ -31,6 +31,9 @@ class BaserowEnterpriseConfig(AppConfig):
         from baserow_enterprise.api.member_data_types import (
             EnterpriseMemberTeamsDataType,
         )
+        from baserow_enterprise.assistant.operations import (
+            ChatAssistantChatOperationType,
+        )
         from baserow_enterprise.role.actions import BatchAssignRoleActionType
         from baserow_enterprise.scopes import TeamsActionScopeType
         from baserow_enterprise.teams.actions import (
@@ -80,6 +83,16 @@ class BaserowEnterpriseConfig(AppConfig):
 
         email_context_registry.register(EnterpriseEmailContextType())
 
+        from baserow.core.registries import application_type_registry
+        from baserow_enterprise.builder.application_types import (
+            EnterpriseBuilderApplicationType,
+        )
+
+        # We replace the original application type with the enterprise one to
+        # add the custom code serializers
+        application_type_registry.unregister(EnterpriseBuilderApplicationType.type)
+        application_type_registry.register(EnterpriseBuilderApplicationType())
+
         action_type_registry.register(CreateTeamActionType())
         action_type_registry.register(UpdateTeamActionType())
         action_type_registry.register(DeleteTeamActionType())
@@ -117,6 +130,15 @@ class BaserowEnterpriseConfig(AppConfig):
         operation_type_registry.register(ListWorkspaceAuditLogEntriesOperationType())
         operation_type_registry.register(UpdateFieldPermissionsOperationType())
         operation_type_registry.register(ReadFieldPermissionsOperationType())
+        operation_type_registry.register(ChatAssistantChatOperationType())
+
+        from baserow.contrib.database.field_rules.registries import (
+            field_rules_type_registry,
+        )
+
+        from .date_dependency.field_rule_types import DateDependencyFieldRuleType
+
+        field_rules_type_registry.register(DateDependencyFieldRuleType())
 
         from baserow.core.registries import subject_type_registry
 
@@ -206,6 +228,15 @@ class BaserowEnterpriseConfig(AppConfig):
         element_type_registry.register(FileInputElementType())
 
         from baserow.contrib.database.data_sync.registries import (
+            two_way_sync_strategy_type_registry,
+        )
+        from baserow_enterprise.data_sync.two_way_sync_strategy_types import (
+            RealtimePushTwoWaySyncStrategy,
+        )
+
+        two_way_sync_strategy_type_registry.register(RealtimePushTwoWaySyncStrategy())
+
+        from baserow.contrib.database.data_sync.registries import (
             data_sync_type_registry,
         )
         from baserow_enterprise.data_sync.data_sync_types import (
@@ -214,6 +245,7 @@ class BaserowEnterpriseConfig(AppConfig):
             HubspotContactsDataSyncType,
             JiraIssuesDataSyncType,
             LocalBaserowTableDataSyncType,
+            PostgreSQLDataSyncType,
         )
 
         data_sync_type_registry.register(LocalBaserowTableDataSyncType())
@@ -221,6 +253,9 @@ class BaserowEnterpriseConfig(AppConfig):
         data_sync_type_registry.register(GitHubIssuesDataSyncType())
         data_sync_type_registry.register(GitLabIssuesDataSyncType())
         data_sync_type_registry.register(HubspotContactsDataSyncType())
+
+        data_sync_type_registry.unregister(PostgreSQLDataSyncType.type)
+        data_sync_type_registry.register(PostgreSQLDataSyncType())
 
         from baserow_enterprise.data_sync.actions import (
             UpdatePeriodicDataSyncIntervalActionType,
@@ -236,7 +271,11 @@ class BaserowEnterpriseConfig(AppConfig):
         webhook_event_type_registry.register(RowsEnterViewEventType())
 
         # Create default roles
-        post_migrate.connect(sync_default_roles_after_migrate, sender=self)
+        post_migrate.connect(
+            sync_default_roles_after_migrate,
+            sender=self,
+            dispatch_uid="sync_default_roles_after_migrate",
+        )
 
         from baserow_enterprise.teams.receivers import (
             connect_to_post_delete_signals_to_cascade_deletion_to_team_subjects,
@@ -253,11 +292,15 @@ class BaserowEnterpriseConfig(AppConfig):
         from baserow.core.notifications.registries import notification_type_registry
         from baserow_enterprise.data_sync.notification_types import (
             PeriodicDataSyncDeactivatedNotificationType,
+            TwoWaySyncDeactivatedNotificationType,
+            TwoWaySyncUpdateFailedNotificationType,
         )
 
         notification_type_registry.register(
             PeriodicDataSyncDeactivatedNotificationType()
         )
+        notification_type_registry.register(TwoWaySyncUpdateFailedNotificationType())
+        notification_type_registry.register(TwoWaySyncDeactivatedNotificationType())
 
         # The signals must always be imported last because they use the registries
         # which need to be filled first.
@@ -282,20 +325,48 @@ def sync_default_roles_after_migrate(sender, **kwargs):
             # Note: we used to migrate `NO_ROLE` to `NO_ACCESS` here.
             # This was moved to 0010_rename_no_role_to_no_access.
             with LockedAtomicTransaction(Role):
-                for role_name, operations in tqdm(
+                all_old_roles = {
+                    r.uid: r for r in Role.objects.all().prefetch_related("operations")
+                }
+                all_old_operations = {op.name: op for op in Operation.objects.all()}
+
+                for role_name, role_operations in tqdm(
                     default_roles.items(), desc="Syncing default roles"
                 ):
-                    role, _ = Role.objects.update_or_create(
-                        uid=role_name,
-                        defaults={"name": f"role.{role_name}", "default": True},
-                    )
-                    role.operations.clear()
-
-                    to_add = []
-                    for operation_type in operations:
-                        operation, _ = Operation.objects.get_or_create(
-                            name=operation_type.type
+                    # Create any missing role or update existing ones
+                    role = all_old_roles.get(role_name, None)
+                    if role is None:
+                        role = Role.objects.create(
+                            uid=role_name,
+                            name=f"role.{role_name}",
+                            default=True,
                         )
-                        to_add.append(operation)
+                    elif not role.default or role.name != f"role.{role_name}":
+                        role.name = f"role.{role_name}"
+                        role.default = True
+                        role.save(update_fields=["name", "default"])
 
-                    role.operations.add(*to_add)
+                    # Create any missing operations for the role
+                    new_ops = Operation.objects.bulk_create(
+                        [
+                            Operation(name=op.type)
+                            for op in role_operations
+                            if op.type not in all_old_operations
+                        ],
+                    )
+                    all_old_operations.update({op.name: op for op in new_ops})
+
+                    old_role_ops = set(op.name for op in role.operations.all())
+                    new_role_ops = set(op.type for op in role_operations)
+
+                    roles_to_add = new_role_ops - old_role_ops
+                    if roles_to_add:
+                        role.operations.add(
+                            *[all_old_operations[op] for op in roles_to_add],
+                        )
+
+                    to_remove = old_role_ops - new_role_ops
+                    if to_remove:
+                        role.operations.remove(
+                            *[all_old_operations[op] for op in to_remove],
+                        )

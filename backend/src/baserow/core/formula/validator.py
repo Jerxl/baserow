@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any, List, Optional, Union
 
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 
 from baserow.contrib.database.fields.constants import (
     BASEROW_BOOLEAN_FIELD_FALSE_VALUES,
@@ -13,11 +14,12 @@ from baserow.contrib.database.fields.constants import (
 from baserow.core.datetime import FormattedDate, FormattedDateTime
 
 
-def ensure_boolean(value: Any) -> bool:
+def ensure_boolean(value: Any, strict=True) -> bool:
     """
     Ensures that the value is a boolean or converts it.
 
     :param value: The value to ensure as a boolean.
+    :param strict: If not strict, an attempt is made to cast the value to a bool.
     :return: The value as a boolean.
     :raises ValidationError: if the value is not a valid boolean or convertible to a
         boolean.
@@ -27,6 +29,9 @@ def ensure_boolean(value: Any) -> bool:
         return True
     elif value in BASEROW_BOOLEAN_FIELD_FALSE_VALUES:
         return False
+
+    if not strict:
+        return bool(value)
 
     raise ValidationError("Value is not a valid boolean or convertible to a boolean.")
 
@@ -90,7 +95,7 @@ def ensure_integer(value: Any, allow_empty: bool = False) -> Optional[int]:
 
     if value is None or value == "":
         if not allow_empty:
-            raise ValidationError("The value is required.")
+            raise ValidationError("The value is required")
         return None
 
     try:
@@ -165,6 +170,22 @@ def ensure_array(value: Any, allow_empty: bool = True) -> List[Any]:
         return [item.strip() for item in value.split(",")]
 
     return [value]
+
+
+def ensure_email(value: Any) -> str:
+    """
+    Ensures that the value is an email or can be converted to an email.
+    :param value: The value to ensure as an email.
+    :return: The value as an email.
+    :raises ValidationError: If the value is not a valid email or convertible to an
+      email.
+    """
+
+    str_value = ensure_string(value)
+
+    validate_email(str_value)
+
+    return str_value
 
 
 def ensure_date(value: Any) -> Optional[date]:

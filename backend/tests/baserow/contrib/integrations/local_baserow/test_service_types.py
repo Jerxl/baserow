@@ -1,22 +1,66 @@
 from unittest.mock import Mock
 
+from django.db import transaction
+
 import pytest
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from baserow.contrib.database.api.fields.serializers import FieldSerializer
 from baserow.contrib.database.fields.handler import FieldHandler
 from baserow.contrib.database.fields.registries import field_type_registry
+from baserow.contrib.database.rows.handler import RowHandler
 from baserow.contrib.database.table.handler import TableHandler
 from baserow.contrib.integrations.local_baserow.service_types import (
+    LocalBaserowAggregateRowsUserServiceType,
+    LocalBaserowDeleteRowServiceType,
     LocalBaserowGetRowUserServiceType,
     LocalBaserowListRowsUserServiceType,
+    LocalBaserowRowsCreatedServiceType,
+    LocalBaserowRowsDeletedServiceType,
+    LocalBaserowRowsUpdatedServiceType,
     LocalBaserowServiceType,
     LocalBaserowTableServiceType,
+    LocalBaserowUpsertRowServiceType,
     LocalBaserowViewServiceType,
 )
-from baserow.core.services.exceptions import ServiceImproperlyConfigured
+from baserow.core.services.exceptions import (
+    ServiceImproperlyConfiguredDispatchException,
+)
+from baserow.core.services.registries import DispatchTypes, service_type_registry
 from baserow.test_utils.helpers import setup_interesting_test_table
 from baserow.test_utils.pytest_conftest import FakeDispatchContext
+
+
+def test_local_baserow_service_type_dispatch_types():
+    local_baserow_dispatch_types = {
+        service_type.type: service_type.dispatch_types
+        for service_type in service_type_registry.get_all()
+        if isinstance(service_type, LocalBaserowServiceType)
+    }
+    assert local_baserow_dispatch_types == {
+        LocalBaserowGetRowUserServiceType.type: [
+            DispatchTypes.DATA,
+            DispatchTypes.ACTION,
+        ],
+        LocalBaserowListRowsUserServiceType.type: [
+            DispatchTypes.DATA,
+            DispatchTypes.ACTION,
+        ],
+        LocalBaserowAggregateRowsUserServiceType.type: [
+            DispatchTypes.DATA,
+            DispatchTypes.ACTION,
+        ],
+        LocalBaserowUpsertRowServiceType.type: [
+            DispatchTypes.ACTION,
+        ],
+        LocalBaserowDeleteRowServiceType.type: [
+            DispatchTypes.ACTION,
+        ],
+        LocalBaserowRowsCreatedServiceType.type: [DispatchTypes.EVENT],
+        LocalBaserowRowsUpdatedServiceType.type: [DispatchTypes.EVENT],
+        LocalBaserowRowsDeletedServiceType.type: [DispatchTypes.EVENT],
+        "local_baserow_grouped_aggregate_rows": [DispatchTypes.DATA],
+    }
 
 
 @pytest.mark.django_db
@@ -41,21 +85,23 @@ def test_local_baserow_table_service_before_dispatch_validation_error(
 
     service_without_table = Mock(table_id=None)
     dispatch_context = FakeDispatchContext()
-    with pytest.raises(ServiceImproperlyConfigured) as exc:
+    with pytest.raises(ServiceImproperlyConfiguredDispatchException) as exc:
         cls().resolve_service_formulas(service_without_table, dispatch_context)
-    assert exc.value.args[0] == "The table property is missing."
+    assert exc.value.args[0] == "No table selected"
 
-    service_with_trashed_table = Mock(table_id=trashed_table.id)
-    with pytest.raises(ServiceImproperlyConfigured) as exc:
+    service_with_trashed_table = Mock(table_id=trashed_table.id, table=trashed_table)
+    with pytest.raises(ServiceImproperlyConfiguredDispatchException) as exc:
         cls().resolve_service_formulas(service_with_trashed_table, dispatch_context)
-    assert exc.value.args[0] == "The specified table is trashed"
+    assert exc.value.args[0] == "The selected table is trashed"
 
-    service_with_table_in_trashed_database = Mock(table_id=table_in_trashed_database.id)
-    with pytest.raises(ServiceImproperlyConfigured) as exc:
+    service_with_table_in_trashed_database = Mock(
+        table_id=table_in_trashed_database.id, table=table_in_trashed_database
+    )
+    with pytest.raises(ServiceImproperlyConfiguredDispatchException) as exc:
         cls().resolve_service_formulas(
             service_with_table_in_trashed_database, dispatch_context
         )
-    assert exc.value.args[0] == "The specified table is trashed"
+    assert exc.value.args[0] == "The selected table is trashed"
 
 
 @pytest.mark.django_db
@@ -661,7 +707,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -671,7 +717,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -681,7 +727,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "boolean",
@@ -691,7 +737,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -701,7 +747,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -711,7 +757,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -722,7 +768,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "object",
@@ -737,7 +783,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "string",
@@ -775,7 +821,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": False,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "array",
@@ -793,7 +839,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": False,
-            "filterable": False,
+            "filterable": True,
             "original_type": "formula",
             "metadata": {},
             "type": "array",
@@ -810,7 +856,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "count",
             "metadata": {},
             "type": "string",
@@ -820,7 +866,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "rollup",
             "metadata": {},
             "type": "string",
@@ -830,7 +876,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "metadata": {},
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "rollup",
             "title": "duration_rollup_sum",
             "type": "string",
@@ -840,7 +886,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "metadata": {},
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "rollup",
             "title": "duration_rollup_avg",
             "type": "string",
@@ -850,7 +896,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": True,
-            "filterable": False,
+            "filterable": True,
             "original_type": "lookup",
             "metadata": {},
             "type": "array",
@@ -867,7 +913,7 @@ def test_local_baserow_table_service_generate_schema_with_interesting_test_table
             "default": None,
             "searchable": True,
             "sortable": False,
-            "filterable": False,
+            "filterable": True,
             "original_type": "lookup",
             "metadata": {},
             "type": "array",
@@ -1102,7 +1148,7 @@ def test_local_baserow_table_service_type_after_update_table_change_deletes_filt
     change_table_from_None_to_Table = {"table": (None, mock_to_table)}
     change_table_from_Table_to_Table = {"table": (mock_from_table, mock_to_table)}
 
-    service_type_cls = LocalBaserowTableServiceType
+    service_type_cls = LocalBaserowListRowsUserServiceType
     service_type_cls.model_class = Mock()
     service_type = service_type_cls()
 
@@ -1111,12 +1157,12 @@ def test_local_baserow_table_service_type_after_update_table_change_deletes_filt
     assert not mock_instance.service_sorts.all.return_value.delete.called
 
     service_type.after_update(mock_instance, {}, change_table_from_None_to_Table)
-    assert not mock_instance.service_filters.return_value.all.return_value.delete.called
-    assert not mock_instance.service_sorts.return_value.all.return_value.delete.called
+    assert not mock_instance.service_filters.all.return_value.delete.called
+    assert not mock_instance.service_sorts.all.return_value.delete.called
 
     service_type.after_update(mock_instance, {}, change_table_from_Table_to_Table)
-    assert mock_instance.service_filters.return_value.all.return_value.delete.called
-    assert mock_instance.service_sorts.return_value.all.return_value.delete.called
+    assert mock_instance.service_filters.all.return_value.delete.called
+    assert mock_instance.service_sorts.all.return_value.delete.called
 
 
 @pytest.mark.django_db
@@ -2003,3 +2049,77 @@ def test_local_baserow_agg_service_type_generate_schema_excludes_fields(data_fix
         service_type.generate_schema(service, allowed_fields=["result"])
         == expected_schema
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_local_baserow_rows_created_trigger_service_type_handler(data_fixture):
+    mocked_on_event = Mock()
+    user = data_fixture.create_user()
+    service_type = service_type_registry.get(LocalBaserowRowsCreatedServiceType.type)
+    service_type.on_event = mocked_on_event
+    table = data_fixture.create_database_table(user=user)
+    field = data_fixture.create_text_field(user, table=table)
+    data_fixture.create_local_baserow_rows_created_service(
+        table=table,
+    )
+    RowHandler().create_rows(
+        user=user,
+        table=table,
+        model=table.get_model(),
+        rows_values=[
+            {f"field_{field.id}": "Community Engagement"},
+            {f"field_{field.id}": "Construction"},
+        ],
+        skip_search_update=True,
+    )
+    mocked_on_event.assert_called_once()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_local_baserow_rows_updated_trigger_service_type_handler(data_fixture):
+    mocked_on_event = Mock()
+    user = data_fixture.create_user()
+    service_type = service_type_registry.get(LocalBaserowRowsUpdatedServiceType.type)
+    service_type.on_event = mocked_on_event
+    table = data_fixture.create_database_table(user=user)
+    field = data_fixture.create_text_field(user, table=table)
+    model = table.get_model()
+    row1 = model.objects.create()
+    row2 = model.objects.create()
+    data_fixture.create_local_baserow_rows_updated_service(
+        table=table,
+    )
+    with transaction.atomic():
+        RowHandler().update_rows(
+            user=user,
+            table=table,
+            model=model,
+            rows_values=[
+                {"id": row1.id, f"field_{field.id}": "updated"},
+                {"id": row2.id, f"field_{field.id}": "updated"},
+            ],
+            skip_search_update=True,
+        )
+    mocked_on_event.assert_called_once()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_local_baserow_rows_deleted_trigger_service_type_handler(data_fixture):
+    mocked_on_event = Mock()
+    user = data_fixture.create_user()
+    service_type = service_type_registry.get(LocalBaserowRowsDeletedServiceType.type)
+    service_type.on_event = mocked_on_event
+    table = data_fixture.create_database_table(user=user)
+    model = table.get_model()
+    row1 = model.objects.create()
+    row2 = model.objects.create()
+    data_fixture.create_local_baserow_rows_updated_service(
+        table=table,
+    )
+    RowHandler().delete_rows(
+        user=user,
+        table=table,
+        model=model,
+        row_ids=[row1.id, row2.id],
+    )
+    mocked_on_event.assert_called_once()

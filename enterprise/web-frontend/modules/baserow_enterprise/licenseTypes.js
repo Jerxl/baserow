@@ -8,14 +8,17 @@ const commonAdvancedFeatures = [
   EnterpriseFeaturesObject.RBAC,
   EnterpriseFeaturesObject.TEAMS,
   EnterpriseFeaturesObject.AUDIT_LOG,
+  EnterpriseFeaturesObject.ASSISTANT,
   // database
   EnterpriseFeaturesObject.DATA_SYNC,
   EnterpriseFeaturesObject.ADVANCED_WEBHOOKS,
   EnterpriseFeaturesObject.FIELD_LEVEL_PERMISSIONS,
+  EnterpriseFeaturesObject.DATE_DEPENDENCY,
   // application builder
   EnterpriseFeaturesObject.BUILDER_SSO,
   EnterpriseFeaturesObject.BUILDER_NO_BRANDING,
   EnterpriseFeaturesObject.BUILDER_FILE_INPUT,
+  EnterpriseFeaturesObject.BUILDER_CUSTOM_CODE,
   // Only self-hosted
   EnterpriseFeaturesObject.SSO,
 ]

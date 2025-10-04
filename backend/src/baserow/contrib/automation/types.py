@@ -1,10 +1,16 @@
 from typing import List, TypedDict
 
+from baserow.contrib.automation.nodes.types import AutomationNodeDict
+from baserow.contrib.automation.workflows.constants import WorkflowState
+from baserow.core.integrations.types import IntegrationDictSubClass
+
 
 class AutomationWorkflowDict(TypedDict):
     id: int
     name: str
     order: int
+    nodes: List[AutomationNodeDict]
+    state: WorkflowState
 
 
 class AutomationDict(TypedDict):
@@ -13,13 +19,4 @@ class AutomationDict(TypedDict):
     order: int
     type: str
     workflows: List[AutomationWorkflowDict]
-
-
-class AutomationNodeDict(TypedDict):
-    id: int
-    order: int
-    type: str
-    workflow_id: int
-    previous_node_id: int
-    parent_node_id: int
-    previous_node_output: str
+    integrations: List[IntegrationDictSubClass]

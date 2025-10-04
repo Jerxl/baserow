@@ -17,6 +17,8 @@ import {
 import { clone } from '@baserow/modules/core/utils/object'
 import { getDefaultSearchModeFromEnv } from '@baserow/modules/database/utils/search'
 import { GRID_VIEW_SIZE_TO_ROW_HEIGHT_MAPPING } from '@baserow/modules/database/constants'
+import { waitFor } from '@baserow/modules/core/utils/queue'
+import { FF_DATE_DEPENDENCY } from '@baserow/modules/core/plugins/featureFlags'
 
 export const maxPossibleOrderValue = 32767
 
@@ -577,6 +579,16 @@ export class GridViewType extends ViewType {
       storePrefix + 'view/grid/updateActiveGroupBys',
       clone(view.group_bys)
     )
+
+    if (
+      this.app.$featureFlagIsEnabled(FF_DATE_DEPENDENCY) &&
+      !isPublic &&
+      !store.getters['fieldRules/hasRules']({ tableId: view.table_id })
+    ) {
+      await store.dispatch('fieldRules/fetchInitial', {
+        tableId: view.table_id,
+      })
+    }
   }
 
   async refresh(
@@ -758,6 +770,21 @@ export class GridViewType extends ViewType {
     storePrefix = ''
   ) {
     if (this.isCurrentView(store, tableId)) {
+      try {
+        // A realtime row update signal can be received before the rows are created.
+        // In that case, there is a race condition because the row doesn't have the
+        // ID yet, so it can't be updated. This can be resolved by waiting all rows
+        // to be created.
+        await waitFor(() =>
+          store.getters[storePrefix + 'view/grid/getRows'].every(
+            (row) => !row._.loading
+          )
+        )
+      } catch (error) {
+        // If the timeout is reached, then just continue with the update because the
+        // realtime update must come through eventually, otherwise the page is not
+        // up to date.
+      }
       await store.dispatch(storePrefix + 'view/grid/updatedExistingRow', {
         view: store.getters['view/getSelected'],
         fields,
@@ -1009,6 +1036,22 @@ export const BaseBufferedRowViewTypeMixin = (Base) =>
       storePrefix = ''
     ) {
       if (this.isCurrentView(store, tableId)) {
+        try {
+          // A realtime row update signal can be received before the rows are created.
+          // In that case, there is a race condition because the row doesn't have the
+          // ID yet, so it can't be updated. This can be resolved by waiting all rows
+          // to be created.
+          await waitFor(
+            () =>
+              !store.getters[
+                storePrefix + 'view/' + this.getType() + '/getCreating'
+              ]
+          )
+        } catch (error) {
+          // If the timeout is reached, then just continue with the update because the
+          // realtime update must come through eventually, otherwise the page is not
+          // up to date.
+        }
         await store.dispatch(
           storePrefix + 'view/' + this.getType() + '/afterExistingRowUpdated',
           {
@@ -1250,6 +1293,6 @@ export class FormViewType extends ViewType {
    * letting the user create one.
    */
   isCompatibleWithDataSync(dataSync) {
-    return !dataSync
+    return !dataSync || dataSync.two_way_sync
   }
 }

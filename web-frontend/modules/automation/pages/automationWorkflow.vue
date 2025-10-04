@@ -1,33 +1,78 @@
 <template>
   <div class="automation-app">
-    <AutomationHeader :automation="automation" />
-    <div class="layout__col-2-2 automation-app__content">
-      <div class="automation-app__content-header">
-        <div class="automation-app__title">{{ currentWorkflow.name }}</div>
+    <AutomationHeader
+      v-if="automation"
+      :automation="automation"
+      @read-only-toggled="handleReadOnlyToggle"
+      @debug-toggled="handleDebugToggle"
+    />
+    <div
+      class="layout__col-2-2 automation-workflow__content"
+      :class="{
+        'automation-workflow__content--loading': workflowLoading,
+      }"
+    >
+      <div v-if="workflowLoading" class="loading"></div>
+      <div v-else class="automation-workflow__editor">
+        <client-only>
+          <WorkflowEditor
+            v-model="selectedNodeId"
+            :nodes="workflowNodes"
+            :is-adding-node="isAddingNode"
+            @add-node="handleAddNode"
+            @remove-node="handleRemoveNode"
+            @replace-node="handleReplaceNode"
+          />
+        </client-only>
+      </div>
+      <div v-if="activeSidePanel" class="automation-workflow__side-panel">
+        <EditorSidePanels :active-side-panel="activeSidePanel" />
       </div>
     </div>
   </div>
 </template>
 
 <script>
+import { computed } from '@nuxtjs/composition-api'
 import AutomationHeader from '@baserow/modules/automation/components/AutomationHeader'
+import WorkflowEditor from '@baserow/modules/automation/components/workflow/WorkflowEditor'
+import EditorSidePanels from '@baserow/modules/automation/components/workflow/EditorSidePanels'
+import { AutomationApplicationType } from '@baserow/modules/automation/applicationTypes'
 
 export default {
   name: 'AutomationWorkflow',
-  components: { AutomationHeader },
+  components: {
+    EditorSidePanels,
+    AutomationHeader,
+    WorkflowEditor,
+  },
   provide() {
     return {
-      workspace: this.workspace,
-      automation: this.automation,
-      currentWorkflow: this.currentWorkflow,
+      isDev: computed(() => this.isDev),
+      workspace: computed(() => this.workspace),
+      automation: computed(() => this.automation),
+      workflow: computed(() => this.workflow),
+      workflowReadOnly: computed({
+        get: () => this.workflowReadOnly,
+        set: (v) => (this.workflowReadOnly = v),
+      }),
+      workflowDebug: computed({
+        get: () => this.workflowDebug,
+        set: (v) => (this.workflowDebug = v),
+      }),
     }
   },
+  beforeRouteUpdate(to, from, next) {
+    this.onRouteChange(to, from, next)
+  },
+  beforeRouteLeave(to, from, next) {
+    this.$store.dispatch('automationWorkflow/unselect')
+    this.onRouteChange(to, from, next)
+  },
   layout: 'app',
-  async asyncData({ store, params, error, $registry }) {
+  async asyncData({ store, params, error, app }) {
     const automationId = parseInt(params.automationId)
     const workflowId = parseInt(params.workflowId)
-
-    const data = {}
     try {
       const automation = await store.dispatch(
         'application/selectById',
@@ -38,26 +83,145 @@ export default {
         automation.workspace.id
       )
 
-      const workflow = store.getters['automationWorkflow/getById'](
-        automation,
-        workflowId
-      )
-
-      await store.dispatch('automationWorkflow/selectById', {
+      const workflow = await store.dispatch('automationWorkflow/selectById', {
         automation,
         workflowId,
       })
 
-      data.workspace = workspace
-      data.automation = automation
-      data.currentWorkflow = workflow
+      await store.dispatch('automationHistory/fetchWorkflowHistory', {
+        workflowId,
+      })
+
+      await store.dispatch('automationWorkflowNode/fetch', {
+        workflow,
+      })
+
+      const applicationType = app.$registry.get(
+        'application',
+        AutomationApplicationType.getType()
+      )
+      await applicationType.loadExtraData(automation)
+
+      return {
+        automation,
+        workspace,
+        workflow,
+      }
     } catch (e) {
-      return error({
+      error({
         statusCode: 404,
         message: 'Automation workflow not found.',
       })
     }
-    return data
+  },
+  data() {
+    return {
+      isAddingNode: false,
+      workflowLoading: false,
+      sidePanelWidth: 360,
+      workflowReadOnly: false,
+      workflowDebug: false,
+    }
+  },
+  computed: {
+    isDev() {
+      return process.env.NODE_ENV === 'development'
+    },
+    workflowNodes() {
+      if (!this.workflow) {
+        return []
+      }
+      return this.$store.getters['automationWorkflowNode/getNodesOrdered'](
+        this.workflow
+      )
+    },
+    activeSidePanel() {
+      return this.$store.getters['automationWorkflow/getActiveSidePanel']
+    },
+    selectedNodeId: {
+      get() {
+        return this.workflow ? this.workflow.selectedNodeId : null
+      },
+      set(nodeId) {
+        let nodeToSelect = null
+        if (nodeId) {
+          nodeToSelect = this.$store.getters['automationWorkflowNode/findById'](
+            this.workflow,
+            nodeId
+          )
+        }
+        this.$store.dispatch('automationWorkflowNode/select', {
+          workflow: this.workflow,
+          node: nodeToSelect,
+        })
+      },
+    },
+  },
+  methods: {
+    handleReadOnlyToggle(newReadOnlyState) {
+      this.workflowReadOnly = newReadOnlyState
+    },
+    handleDebugToggle(newDebugState) {
+      this.workflowDebug = newDebugState
+    },
+    async handleAddNode({ type, previousNodeId, previousNodeOutput }) {
+      try {
+        this.isAddingNode = true
+        await this.$store.dispatch('automationWorkflowNode/create', {
+          workflow: this.workflow,
+          type,
+          previousNodeId,
+          previousNodeOutput,
+        })
+      } catch (err) {
+        console.error('Failed to add node:', err)
+      } finally {
+        this.isAddingNode = false
+      }
+    },
+    async handleRemoveNode(nodeId) {
+      if (!this.workflow) {
+        console.error('workflow is not available to remove a node.')
+        return
+      }
+      try {
+        await this.$store.dispatch('automationWorkflowNode/delete', {
+          workflow: this.workflow,
+          nodeId: parseInt(nodeId),
+        })
+      } catch (err) {
+        console.error('Failed to delete node:', err)
+      }
+    },
+    async handleReplaceNode({ node, type }) {
+      await this.$store.dispatch('automationWorkflowNode/replace', {
+        workflow: this.workflow,
+        nodeId: parseInt(node.id),
+        newType: type,
+      })
+    },
+    onRouteChange(_, from, next) {
+      const automation = this.$store.getters['application/get'](
+        parseInt(from.params.automationId)
+      )
+      if (automation) {
+        const workflow = this.$store.getters['automationWorkflow/getById'](
+          automation,
+          parseInt(from.params.workflowId)
+        )
+        if (workflow) {
+          this.$store.dispatch('automationWorkflowNode/select', {
+            workflow,
+            node: null,
+          })
+          this.$store.dispatch('application/forceUpdate', {
+            application: automation,
+            data: { _loadedOnce: false },
+          })
+        }
+      }
+      next()
+    },
   },
 }
 </script>

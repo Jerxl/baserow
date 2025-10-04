@@ -19,11 +19,11 @@ import {
   ensurePositiveInteger,
   ensureString,
   ensureStringOrInteger,
+  ensureDate,
+  ensureDateTime,
 } from '@baserow/modules/core/utils/validator'
 import {
   CHOICE_OPTION_TYPES,
-  DATE_FORMATS,
-  TIME_FORMATS,
   IMAGE_SOURCE_TYPES,
   IFRAME_SOURCE_TYPES,
   DIRECTIONS,
@@ -64,7 +64,7 @@ import {
   MultiPageElementTypeMixin,
 } from '@baserow/modules/builder/elementTypeMixins'
 import { isNumeric, isValidEmail } from '@baserow/modules/core/utils/string'
-import { FormattedDate, FormattedDateTime } from '@baserow/modules/builder/date'
+
 import RatingElementForm from '@baserow/modules/builder/components/elements/components/forms/general/RatingElementForm'
 import RatingElement from '@baserow/modules/builder/components/elements/components/RatingElement.vue'
 import RatingInputElement from '@baserow/modules/builder/components/elements/components/RatingInputElement.vue'
@@ -132,6 +132,7 @@ export class ElementType extends Registerable {
 
   get stylesAll() {
     return [
+      'css_classes',
       'style_padding_top',
       'style_padding_bottom',
       'style_padding_left',
@@ -276,8 +277,9 @@ export class ElementType extends Registerable {
    */
   workflowActionsInError({ page, element, builder }) {
     const workflowActions = this.app.store.getters[
-      'workflowAction/getElementWorkflowActions'
+      'builderWorkflowAction/getElementWorkflowActions'
     ](page, element.id)
+
     return workflowActions.some((workflowAction) => {
       const workflowActionType = this.app.$registry.get(
         'workflowAction',
@@ -292,20 +294,32 @@ export class ElementType extends Registerable {
   }
 
   /**
+   * Returns the reason why the element configuration is invalid.
+   * @param {object} param An object containing the workspace, page, element, and builder
+   * @returns A string that represent the current error.
+   */
+  getErrorMessage({ workspace, builder, page, element }) {
+    if (this.isDeactivatedReason({ workspace }) !== null) {
+      return this.isDeactivatedReason({ workspace })
+    }
+
+    if (
+      this.getEvents(element).length > 0 &&
+      this.workflowActionsInError({ page, element, builder })
+    ) {
+      return this.app.i18n.t('elementType.errorWorkflowActionInError')
+    }
+
+    return null
+  }
+
+  /**
    * Returns whether the element configuration is valid or not.
    * @param {object} param An object containing the page, element, and builder
    * @returns true if the element is in error
    */
-  isInError({ workspace, page, element, builder }) {
-    if (this.isDeactivatedReason({ workspace }) !== null) {
-      return true
-    }
-
-    if (this.getEvents(element).length > 0) {
-      return this.workflowActionsInError({ page, element, builder })
-    }
-
-    return false
+  isInError(params) {
+    return Boolean(this.getErrorMessage(params))
   }
 
   /**
@@ -824,23 +838,19 @@ export class FormContainerElementType extends ContainerElementTypeMixin(
   }
 
   getEvents(element) {
-    return [new SubmitEvent({ ...this.app })]
+    return [new SubmitEvent({ app: this.app })]
   }
 
-  /**
-   * A form container is invalid if it has no workflow actions, or it has no
-   * children.
-   */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     const workflowActions = this.app.store.getters[
-      'workflowAction/getElementWorkflowActions'
+      'builderWorkflowAction/getElementWorkflowActions'
     ](page, element.id)
 
     if (!workflowActions.length) {
-      return true
+      return this.app.i18n.t('elementType.errorNoWorkflowAction')
     }
 
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1028,7 +1038,7 @@ export class TableElementType extends CollectionElementTypeMixin(ElementType) {
         )
         return collectionFieldType.events.map((EventType) => {
           return new EventType({
-            ...this.app,
+            app: this.app,
             namePrefix: uid,
             labelSuffix: `- ${name}`,
             applicationContextAdditions: { allowSameElement: true },
@@ -1042,25 +1052,23 @@ export class TableElementType extends CollectionElementTypeMixin(ElementType) {
    * The table is in error if the configuration is invalid (see collection element
    * mixin) or if one of the fields are in error.
    */
-  isInError({ workspace, page, element, builder }) {
-    return (
-      super.isInError({
-        workspace,
-        page,
-        element,
+  getErrorMessage({ workspace, page, element, builder }) {
+    const hasCollectionFieldInError = element.fields.some((collectionField) => {
+      const collectionFieldType = this.app.$registry.get(
+        'collectionField',
+        collectionField.type
+      )
+      return collectionFieldType.isInError({
+        field: collectionField,
         builder,
-      }) ||
-      element.fields.some((collectionField) => {
-        const collectionFieldType = this.app.$registry.get(
-          'collectionField',
-          collectionField.type
-        )
-        return collectionFieldType.isInError({
-          field: collectionField,
-          builder,
-        })
       })
-    )
+    })
+
+    if (hasCollectionFieldInError) {
+      return this.app.i18n.t('elementType.errorCollectionFieldInError')
+    }
+
+    return super.getErrorMessage({ workspace, page, element, builder })
   }
 }
 
@@ -1302,11 +1310,11 @@ export class HeadingElementType extends ElementType {
    * A value is mandatory for the Heading element. Return true if the value
    * is empty to indicate an error, otherwise return false.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (element.value.length === 0) {
-      return true
+      return this.app.i18n.t('elementType.errorValueMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1358,11 +1366,11 @@ export class TextElementType extends ElementType {
    * A value is mandatory for the Text element. Return true if the value
    * is empty to indicate an error, otherwise return false.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (element.value.length === 0) {
-      return true
+      return this.app.i18n.t('elementType.errorValueMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1411,33 +1419,37 @@ export class LinkElementType extends ElementType {
   }
 
   /**
-   * LinkElement validation returns true if the element is misconfigured,
-   * otherwise return false.
-   *
    * When the Navigate To is a Page, the page and the path parameters must
    * be valid.
    *
    * When the Navigate To is a Custom URL, a Destination URL value must be
    * provided.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     // A Link without any text isn't usable
-    if (!element.value) {
-      return true
+    if (element.value.length === 0) {
+      return this.app.i18n.t('elementType.errorValueMissing')
     }
 
     if (element.navigation_type === 'page') {
       if (!element.navigate_to_page_id) {
-        return true
+        return this.app.i18n.t('elementType.errorNavigateToPageMissing')
       }
-      return pathParametersInError(
-        element,
-        this.app.store.getters['page/getVisiblePages'](builder)
-      )
-    } else if (element.navigation_type === 'custom') {
-      return Boolean(!element.navigate_to_url)
+      if (
+        pathParametersInError(
+          element,
+          this.app.store.getters['page/getVisiblePages'](builder)
+        )
+      ) {
+        return this.app.i18n.t('elementType.errorPageParameterInError')
+      }
+    } else if (
+      element.navigation_type === 'custom' &&
+      !element.navigate_to_url
+    ) {
+      return this.app.i18n.t('elementType.errorNavigationUrlMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1514,19 +1526,19 @@ export class ImageElementType extends ElementType {
    * to indicate an error when an image source doesn't exist, otherwise
    * return false.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (
       element.image_source_type === IMAGE_SOURCE_TYPES.UPLOAD &&
       !element.image_file?.url
     ) {
-      return true
+      return this.app.i18n.t('elementType.errorImageFileMissing')
     } else if (
       element.image_source_type === IMAGE_SOURCE_TYPES.URL &&
       !element.image_url
     ) {
-      return true
+      return this.app.i18n.t('elementType.errorImageUrlMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1575,27 +1587,28 @@ export class ButtonElementType extends ElementType {
   }
 
   getEvents(element) {
-    return [new ClickEvent({ ...this.app })]
+    return [new ClickEvent({ app: this.app })]
   }
 
   /**
    * A Button element must have a Workflow Action to be considered valid. Return
    * true if there are no Workflow Actions, otherwise return false.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     // If Button without any label should be considered invalid
-    if (!element.value) {
-      return true
+    if (element.value.length === 0) {
+      return this.app.i18n.t('elementType.errorValueMissing')
     }
 
     const workflowActions = this.app.store.getters[
-      'workflowAction/getElementWorkflowActions'
+      'builderWorkflowAction/getElementWorkflowActions'
     ](page, element.id)
 
     if (!workflowActions.length) {
-      return true
+      return this.app.i18n.t('elementType.errorNoWorkflowAction')
     }
-    return super.isInError({
+
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1743,15 +1756,22 @@ export class ChoiceElementType extends FormElementType {
    * @returns {boolean}
    */
   isValid(element, value, applicationContext) {
-    const options =
-      element.option_type === CHOICE_OPTION_TYPES.FORMULAS
-        ? ensureArray(
-            this.resolveFormula(element.formula_value, {
-              element,
-              ...applicationContext,
-            })
-          ).map(ensureStringOrInteger)
-        : this.choiceOptions(element)
+    let options
+
+    if (element.option_type === CHOICE_OPTION_TYPES.FORMULAS) {
+      try {
+        options = ensureArray(
+          this.resolveFormula(element.formula_value, {
+            element,
+            ...applicationContext,
+          })
+        ).map(ensureStringOrInteger)
+      } catch {
+        options = []
+      }
+    } else {
+      options = this.choiceOptions(element)
+    }
 
     const validOption = element.multiple
       ? options.some((option) => value.includes(option))
@@ -1760,17 +1780,17 @@ export class ChoiceElementType extends FormElementType {
     return !(element.required && !validOption)
   }
 
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (element.option_type === CHOICE_OPTION_TYPES.MANUAL) {
       if (element.options.length === 0) {
-        return true
+        return this.app.i18n.t('elementType.errorOptionsMissing')
       }
     } else if (element.option_type === CHOICE_OPTION_TYPES.FORMULAS) {
       if (element.formula_value === '') {
-        return true
+        return this.app.i18n.t('elementType.errorOptionsMissing')
       }
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1876,16 +1896,16 @@ export class IFrameElementType extends ElementType {
    * source_type. If the value doesn't exist, return true to indicate an error,
    * otherwise return false.
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (element.source_type === IFRAME_SOURCE_TYPES.URL && !element.url) {
-      return true
+      return this.app.i18n.t('elementType.errorIframeUrlMissing')
     } else if (
       element.source_type === IFRAME_SOURCE_TYPES.EMBED &&
       !element.embed
     ) {
-      return true
+      return this.app.i18n.t('elementType.errorIframeContentMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -1995,11 +2015,11 @@ export class RecordSelectorElementType extends CollectionElementTypeMixin(
    * @param {Object} element the element to check the error
    * @returns
    */
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     if (!element.data_source_id) {
-      return true
+      return this.$t('elementType.errorDataSourceMissing')
     }
-    return super.isInError({
+    return super.getErrorMessage({
       workspace,
       page,
       element,
@@ -2057,50 +2077,30 @@ export class DateTimePickerElementType extends FormElementType {
     return element.include_time ? 'datetime' : 'date'
   }
 
-  /**
-   * Parse a date and time string value based on the element settings.
-   * It uses element's `date_format` and `time_format` properties to parse the
-   * date. It will only parse the time if `include_time` is on.
-   *
-   * @param element {Object} - The element that contains the formatting options.
-   * @param value {string} - The date and time string to be parsed.
-   * @returns {FormattedDate|FormattedDateTime} - The date or datetimme object.
-   */
-  parseElementDateTime(element, value) {
-    const FormattedDateOrDateTimeClass = element.include_time
-      ? FormattedDateTime
-      : FormattedDate
-
-    // Try to parse the date/datetime initially as an ISO string
-    let parsedValue = new FormattedDateOrDateTimeClass(value)
-
-    // If the previous fails, try again with the element current format
-    if (!parsedValue.isValid()) {
-      const dateFormat = DATE_FORMATS[element.date_format].format
-      const timeFormat = TIME_FORMATS[element.time_format].format
-      const format = element.include_time
-        ? `${dateFormat} ${timeFormat}`
-        : dateFormat
-      parsedValue = new FormattedDateOrDateTimeClass(value, format)
-    }
-    return parsedValue
-  }
-
   getInitialFormDataValue(element, applicationContext) {
     const resolvedDefaultValue = this.resolveFormula(element.default_value, {
       element,
       ...applicationContext,
     })
-    return resolvedDefaultValue
-      ? this.parseElementDateTime(element, resolvedDefaultValue)
-      : null
+
+    try {
+      // We try to convert it to a date and if it works we return it.
+      const result = element.include_time
+        ? ensureDateTime(resolvedDefaultValue)
+        : ensureDate(resolvedDefaultValue)
+
+      return result
+    } catch (e) {
+      return null
+    }
   }
 
   isValid(element, value) {
     if (!value) {
       return !element.required
     }
-    return this.parseElementDateTime(element, value).isValid()
+
+    return value instanceof Date && !isNaN(value)
   }
 }
 
@@ -2417,7 +2417,7 @@ export class MenuElementType extends ElementType {
         if (menuItemType === 'button') {
           return [
             new ClickEvent({
-              ...this.app,
+              app: this.app,
               namePrefix: uid,
               labelSuffix: `- ${name}`,
               applicationContextAdditions: { allowSameElement: true },
@@ -2429,64 +2429,91 @@ export class MenuElementType extends ElementType {
       .flat()
   }
 
-  isInError({ workspace, page, element, builder }) {
+  getErrorMessage({ workspace, page, element, builder }) {
     // There must be at least one menu item
     if (!element.menu_items?.length) {
-      return true
+      return this.app.i18n.t('elementType.errorNoMenuItem')
     }
 
-    const workflowActions = this.app.store.getters[
-      'workflowAction/getElementWorkflowActions'
-    ](page, element.id)
-
-    const hasInvalidMenuItem = element.menu_items.some((menuItem) => {
-      if (menuItem.children?.length) {
-        return menuItem.children.some((child) => {
-          return this.menuItemIsInError(child, builder, workflowActions)
-        })
-      } else {
-        return this.menuItemIsInError(menuItem, builder, workflowActions)
-      }
-    })
-
-    return (
-      hasInvalidMenuItem ||
-      super.isInError({
-        workspace,
-        page,
-        element,
-        builder,
+    if (
+      element.menu_items.some((menuItem) => {
+        return this.getItemMenuError({ builder, page, element, menuItem })
       })
-    )
+    ) {
+      return this.app.i18n.t('elementType.errorMenuItemInError')
+    }
+
+    return super.getErrorMessage({
+      workspace,
+      page,
+      element,
+      builder,
+    })
   }
 
-  menuItemIsInError(element, builder, workflowActions) {
-    if (['separator', 'spacer'].includes(element.type)) {
-      return false
-    } else if (element.type === 'button') {
-      // For button variants, there must be at least one workflow action
-      return !element.name || !workflowActions.length
-    } else if (element.type === 'link') {
-      if (!element.name) {
-        return true
-      }
+  getItemMenuError({ builder, page, element, menuItem }) {
+    const workflowActions = this.app.store.getters[
+      'builderWorkflowAction/getElementWorkflowActions'
+    ](page, element.id)
 
-      if (!element.children?.length) {
-        if (element.navigation_type === 'page') {
-          if (!element.navigate_to_page_id) {
-            return true
-          }
-          return pathParametersInError(
-            element,
-            this.app.store.getters['page/getVisiblePages'](builder)
-          )
-        } else if (element.navigation_type === 'custom') {
-          return !element.navigate_to_url
-        }
+    if (menuItem.children?.length) {
+      if (
+        menuItem.children.some((child) => {
+          return this.menuItemErrorMessage(child, builder, workflowActions)
+        })
+      ) {
+        return this.app.i18n.t('elementType.errorSubMenuItemInError')
       }
+    } else {
+      return this.menuItemErrorMessage(menuItem, builder, workflowActions)
+    }
+    return null
+  }
+
+  menuItemErrorMessage(menuItem, builder, workflowActions) {
+    switch (menuItem.type) {
+      case 'separator':
+      case 'spacer':
+        return null
+      case 'button':
+        if (!menuItem.name) {
+          return this.app.i18n.t('elementType.errorNameMissing')
+        }
+        if (!workflowActions.length) {
+          return this.app.i18n.t('elementType.errorNoWorkflowAction')
+        }
+        break
+      case 'link':
+        if (!menuItem.name) {
+          return this.app.i18n.t('elementType.errorNameMissing')
+        }
+
+        if (!menuItem.children?.length) {
+          if (menuItem.navigation_type === 'page') {
+            if (!menuItem.navigate_to_page_id) {
+              return this.app.i18n.t('elementType.errorNavigateToPageMissing')
+            }
+            if (
+              pathParametersInError(
+                menuItem,
+                this.app.store.getters['page/getVisiblePages'](builder)
+              )
+            ) {
+              return this.app.i18n.t('elementType.errorPageParameterInError')
+            }
+          }
+
+          if (
+            menuItem.navigation_type === 'custom' &&
+            !menuItem.navigate_to_url
+          ) {
+            return this.app.i18n.t('elementType.errorNavigationUrlMissing')
+          }
+        }
+        break
     }
 
-    return false
+    return null
   }
 
   getDisplayName(element, applicationContext) {

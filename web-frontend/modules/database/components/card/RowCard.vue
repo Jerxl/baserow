@@ -42,6 +42,7 @@
               <component
                 :is="getCardComponent(field)"
                 v-if="!loading"
+                :row="row"
                 :field="field"
                 :value="row['field_' + field.id]"
                 :workspace-id="workspaceId"
@@ -55,7 +56,7 @@
 </template>
 
 <script>
-import RecursiveWrapper from '@baserow/modules/database/components/RecursiveWrapper'
+import RecursiveWrapper from '@baserow/modules/core/components/RecursiveWrapper'
 
 export default {
   name: 'RowCard',

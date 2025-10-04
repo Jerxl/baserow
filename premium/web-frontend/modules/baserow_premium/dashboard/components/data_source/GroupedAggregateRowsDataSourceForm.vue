@@ -77,7 +77,8 @@
         <ButtonText
           icon="iconoir-plus"
           type="secondary"
-          :disabled="!canAddSeries"
+          :disabled="!canAddSeries || disabled"
+          :loading="loading"
           tooltip-position="bottom-left"
           @click="addSeries"
         >
@@ -94,8 +95,11 @@
         :aggregation-series="values.aggregation_series"
         :series-index="index"
         :default-values="series"
+        :widget="widget"
+        :loading="loading"
         @delete-series="deleteSeries"
         @values-changed="onAggregationSeriesUpdated(index, $event)"
+        @series-config-changed="onSeriesConfigUpdated($event)"
       >
       </AggregationSeriesForm>
     </FormSection>
@@ -158,6 +162,11 @@ export default {
       required: false,
       default: '',
     },
+    loading: {
+      type: Boolean,
+      required: false,
+      default: true,
+    },
   },
   setup() {
     return { v$: useVuelidate() }
@@ -196,6 +205,11 @@ export default {
           ]
           this.values.aggregation_group_bys = []
           this.values.aggregation_sorts = []
+
+          // reset widget conf
+          this.$emit('widget-values-changed', {
+            series_config: [],
+          })
         }
       },
     },
@@ -353,15 +367,49 @@ export default {
     },
     async deleteSeries(index) {
       this.setEmitValues(false)
+      const seriesId = this.values.aggregation_series[index].id
+
+      // Update series
       this.values.aggregation_series.splice(index, 1)
       await this.$nextTick()
       this.$refs.aggregationSeriesForms.forEach((form) => form.reset())
       this.$emit('values-changed', {
         aggregation_series: this.values.aggregation_series,
       })
+
+      // Update series config
+      const updatedSeriesConfig = JSON.parse(
+        JSON.stringify(this.widget.series_config || [])
+      )
+      const deleteIndex = updatedSeriesConfig.findIndex(
+        (item) => item.series_id === seriesId
+      )
+      if (deleteIndex >= 0) {
+        updatedSeriesConfig.splice(deleteIndex, 1)
+        this.$emit('widget-values-changed', {
+          series_config: updatedSeriesConfig,
+        })
+      }
+
       await this.$nextTick()
       this.setEmitValues(true)
       this.v$.$touch()
+    },
+    onSeriesConfigUpdated(updatedValues) {
+      const updatedSeriesConfig = JSON.parse(
+        JSON.stringify(this.widget.series_config || [])
+      )
+      const index = updatedSeriesConfig.findIndex(
+        (item) => item.series_id === updatedValues.series_id
+      )
+      if (index >= 0) {
+        updatedSeriesConfig[index] = updatedValues
+      } else {
+        updatedSeriesConfig.push(updatedValues)
+      }
+      this.$emit('widget-values-changed', {
+        series_config: updatedSeriesConfig,
+      })
     },
     onAggregationSeriesUpdated(index, aggregationSeriesValues) {
       const updatedAggregationSeries = this.values.aggregation_series

@@ -15,8 +15,34 @@ import { registerRealtimeEvents } from '@baserow/modules/automation/realtime'
 import { AutomationApplicationType } from '@baserow/modules/automation/applicationTypes'
 import automationApplicationStore from '@baserow/modules/automation/store/automationApplication'
 import automationWorkflowStore from '@baserow/modules/automation/store/automationWorkflow'
-import { DuplicateAutomationWorkflowJobType } from '@baserow/modules/automation/jobTypes'
+import automationWorkflowNodeStore from '@baserow/modules/automation/store/automationWorkflowNode'
+import automationHistoryStore from '@baserow/modules/automation/store/automationHistory'
+import {
+  LocalBaserowCreateRowActionNodeType,
+  LocalBaserowUpdateRowActionNodeType,
+  LocalBaserowDeleteRowActionNodeType,
+  LocalBaserowGetRowActionNodeType,
+  LocalBaserowListRowsActionNodeType,
+  LocalBaserowRowsCreatedTriggerNodeType,
+  LocalBaserowRowsUpdatedTriggerNodeType,
+  LocalBaserowRowsDeletedTriggerNodeType,
+  LocalBaserowAggregateRowsActionNodeType,
+  CoreHttpRequestNodeType,
+  CoreSMTPEmailNodeType,
+  CoreRouterNodeType,
+  CorePeriodicTriggerNodeType,
+} from '@baserow/modules/automation/nodeTypes'
+import {
+  DuplicateAutomationWorkflowJobType,
+  PublishAutomationWorkflowJobType,
+} from '@baserow/modules/automation/jobTypes'
 import { FF_AUTOMATION } from '@baserow/modules/core/plugins/featureFlags'
+import {
+  HistoryEditorSidePanelType,
+  NodeEditorSidePanelType,
+} from '@baserow/modules/automation/editorSidePanelTypes'
+import { PreviousNodeDataProviderType } from '@baserow/modules/automation/dataProviderTypes'
+import { PeriodicTriggerServiceType } from '@baserow/modules/automation/serviceTypes'
 
 export default (context) => {
   const { app, isDev, store } = context
@@ -38,6 +64,8 @@ export default (context) => {
 
   store.registerModule('automationApplication', automationApplicationStore)
   store.registerModule('automationWorkflow', automationWorkflowStore)
+  store.registerModule('automationWorkflowNode', automationWorkflowNodeStore)
+  store.registerModule('automationHistory', automationHistoryStore)
   store.registerModule(
     'template/automationApplication',
     automationApplicationStore
@@ -49,10 +77,55 @@ export default (context) => {
       new AutomationApplicationType(context)
     )
     app.$registry.register(
+      'automationDataProvider',
+      new PreviousNodeDataProviderType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowRowsCreatedTriggerNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowRowsUpdatedTriggerNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowRowsDeletedTriggerNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowCreateRowActionNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowUpdateRowActionNodeType(context)
+    )
+    app.$registry.register('node', new CoreHttpRequestNodeType(context))
+    app.$registry.register('node', new CoreSMTPEmailNodeType(context))
+    app.$registry.register('node', new CoreRouterNodeType(context))
+    app.$registry.register(
+      'node',
+      new LocalBaserowDeleteRowActionNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowGetRowActionNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowListRowsActionNodeType(context)
+    )
+    app.$registry.register(
+      'node',
+      new LocalBaserowAggregateRowsActionNodeType(context)
+    )
+    app.$registry.register('node', new CorePeriodicTriggerNodeType(context))
+    app.$registry.register('service', new PeriodicTriggerServiceType(context))
+    app.$registry.register(
       'job',
       new DuplicateAutomationWorkflowJobType(context)
     )
-
+    app.$registry.register('job', new PublishAutomationWorkflowJobType(context))
     app.$registry.registerNamespace('automationSettings')
     app.$registry.register(
       'automationSettings',
@@ -61,6 +134,14 @@ export default (context) => {
     app.$registry.register(
       'automationSettings',
       new IntegrationsAutomationSettingsType(context)
+    )
+    app.$registry.register(
+      'editorSidePanel',
+      new NodeEditorSidePanelType(context)
+    )
+    app.$registry.register(
+      'editorSidePanel',
+      new HistoryEditorSidePanelType(context)
     )
   }
 }

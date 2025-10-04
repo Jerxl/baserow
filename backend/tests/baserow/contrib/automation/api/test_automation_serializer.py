@@ -14,7 +14,7 @@ def automation_fixture(data_fixture):
         order=1,
     )
     workflow = data_fixture.create_automation_workflow(
-        automation=automation, name="test"
+        user, automation=automation, name="test"
     )
 
     return {
@@ -46,5 +46,13 @@ def test_serializer_get_workflows(automation_fixture):
 
     workflows = serializer.get_workflows(automation)
     assert workflows == [
-        {"id": workflow.id, "name": "test", "order": 1, "automation_id": automation.id}
+        {
+            "id": workflow.id,
+            "name": "test",
+            "order": 1,
+            "automation_id": automation.id,
+            "allow_test_run_until": None,
+            "state": "draft",
+            "published_on": None,
+        }
     ]

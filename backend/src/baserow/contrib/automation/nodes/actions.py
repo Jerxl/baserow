@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
@@ -14,6 +14,7 @@ from baserow.contrib.automation.nodes.models import AutomationNode
 from baserow.contrib.automation.nodes.node_types import AutomationNodeType
 from baserow.contrib.automation.nodes.service import AutomationNodeService
 from baserow.contrib.automation.nodes.trash_types import AutomationNodeTrashableItemType
+from baserow.contrib.automation.nodes.types import NextAutomationNodeValues
 from baserow.contrib.automation.workflows.models import AutomationWorkflow
 from baserow.contrib.automation.workflows.service import AutomationWorkflowService
 from baserow.core.action.models import Action
@@ -44,7 +45,14 @@ class CreateAutomationNodeActionType(UndoableActionType):
         workflow: AutomationWorkflow,
         data: dict,
     ) -> AutomationNode:
-        node = AutomationNodeService().create_node(user, node_type, workflow, **data)
+        before_id = data.pop("before_id", None)
+        before = (
+            AutomationNodeService().get_node(user, before_id) if before_id else None
+        )
+
+        node = AutomationNodeService().create_node(
+            user, node_type, workflow, before, **data
+        )
 
         cls.register_action(
             user=user,
@@ -100,8 +108,8 @@ class UpdateAutomationNodeActionType(UndoableActionType):
         automation_name: str
         node_id: int
         node_type: str
-        node_original_params: dict[str, any]
-        node_new_params: dict[str, any]
+        node_original_params: dict[str, Any]
+        node_new_params: dict[str, Any]
 
     @classmethod
     def do(
@@ -125,6 +133,7 @@ class UpdateAutomationNodeActionType(UndoableActionType):
             scope=cls.scope(updated_node.node.workflow.id),
             workspace=updated_node.node.workflow.automation.workspace,
         )
+
         return updated_node.node
 
     @classmethod
@@ -291,36 +300,40 @@ class DuplicateAutomationNodeActionType(UndoableActionType):
 
     @dataclass
     class Params:
-        workflow_id: int
-        node_id: int
-        node_type: str
-        original_node_id: int
-        automation_name: str
         automation_id: int
+        automation_name: str
+        workflow_id: int
+        node_id: int  # The source node id
+        node_type: str  # The source node type
+        source_node_next_nodes_values: List[NextAutomationNodeValues]
+        duplicated_node_id: int
+        duplicated_node_next_nodes_values: List[NextAutomationNodeValues]
 
     @classmethod
     def do(
         cls,
         user: AbstractUser,
-        node_id: int,
+        source_node_id: int,
     ) -> AutomationNode:
-        node = AutomationNodeService().get_node(user, node_id)
-
-        node_clone = AutomationNodeService().duplicate_node(user, node)
+        source_node = AutomationNodeService().get_node(user, source_node_id)
+        duplication = AutomationNodeService().duplicate_node(user, source_node)
+        workflow = source_node.workflow
         cls.register_action(
             user=user,
             params=cls.Params(
-                node_clone.workflow.id,
-                node_clone.id,
-                node.get_type().type,
-                node_id,
-                node.workflow.automation.name,
-                node.workflow.automation.id,
+                workflow.automation_id,
+                workflow.automation.name,
+                workflow.id,
+                source_node_id,
+                source_node.get_type().type,
+                duplication.source_node_next_nodes_values,
+                duplication.duplicated_node.id,
+                duplication.duplicated_node_next_nodes_values,
             ),
-            scope=cls.scope(node.workflow.id),
-            workspace=node.workflow.automation.workspace,
+            scope=cls.scope(workflow.id),
+            workspace=workflow.automation.workspace,
         )
-        return node_clone
+        return duplication.duplicated_node
 
     @classmethod
     def scope(cls, workflow_id):
@@ -333,6 +346,97 @@ class DuplicateAutomationNodeActionType(UndoableActionType):
         params: Params,
         action_to_undo: Action,
     ):
+        # Trash the duplicated node.
+        AutomationNodeService().delete_node(user, params.duplicated_node_id)
+
+        # Revert any next nodes to point back to the source node.
+        AutomationNodeHandler().update_next_nodes_values(
+            params.source_node_next_nodes_values
+        )
+
+    @classmethod
+    def redo(
+        cls,
+        user: AbstractUser,
+        params: Params,
+        action_to_redo: Action,
+    ):
+        # Restore the duplicated node again.
+        TrashHandler.restore_item(
+            user,
+            AutomationNodeTrashableItemType.type,
+            params.duplicated_node_id,
+        )
+
+        # Revert any next nodes to point back to the duplicated node.
+        AutomationNodeHandler().update_next_nodes_values(
+            params.duplicated_node_next_nodes_values
+        )
+
+
+class ReplaceAutomationNodeActionType(UndoableActionType):
+    type = "replace_automation_node"
+    description = ActionTypeDescription(
+        _("Replace automation node"),
+        _(
+            "Node (%(node_id)s) changed from a type "
+            "of %(original_node_type)s to %(node_type)s"
+        ),
+        NODE_ACTION_CONTEXT,
+    )
+
+    @dataclass
+    class Params:
+        automation_id: int
+        automation_name: str
+        workflow_id: int
+        node_id: int
+        node_type: str
+        original_node_id: int
+        original_node_type: str
+
+    @classmethod
+    def do(
+        cls,
+        user: AbstractUser,
+        node_id: int,
+        new_node_type: str,
+    ) -> AutomationNode:
+        replacement = AutomationNodeService().replace_node(user, node_id, new_node_type)
+        replaced_node = replacement.node
+        cls.register_action(
+            user=user,
+            params=cls.Params(
+                replaced_node.workflow.automation.id,
+                replaced_node.workflow.automation.name,
+                replaced_node.workflow_id,
+                replaced_node.id,
+                replaced_node.get_type().type,
+                replacement.original_node_id,
+                replacement.original_node_type,
+            ),
+            scope=cls.scope(replaced_node.workflow.id),
+            workspace=replaced_node.workflow.automation.workspace,
+        )
+        return replaced_node
+
+    @classmethod
+    def scope(cls, workflow_id):
+        return WorkflowActionScopeType.value(workflow_id)
+
+    @classmethod
+    def undo(
+        cls,
+        user: AbstractUser,
+        params: Params,
+        action_to_undo: Action,
+    ):
+        # Restore the node to its original type.
+        TrashHandler.restore_item(
+            user,
+            AutomationNodeTrashableItemType.type,
+            params.original_node_id,
+        )
         AutomationNodeService().delete_node(user, params.node_id)
 
     @classmethod
@@ -342,8 +446,10 @@ class DuplicateAutomationNodeActionType(UndoableActionType):
         params: Params,
         action_to_redo: Action,
     ):
+        # Restore the node to its new type again.
         TrashHandler.restore_item(
             user,
             AutomationNodeTrashableItemType.type,
             params.node_id,
         )
+        AutomationNodeService().delete_node(user, params.original_node_id)

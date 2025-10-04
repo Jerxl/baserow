@@ -10,7 +10,6 @@ from baserow.contrib.builder.data_sources.builder_dispatch_context import (
 )
 from baserow.contrib.builder.data_sources.exceptions import (
     DataSourceDoesNotExist,
-    DataSourceImproperlyConfigured,
     DataSourceNotInSamePage,
 )
 from baserow.contrib.builder.data_sources.models import DataSource
@@ -18,7 +17,10 @@ from baserow.contrib.builder.data_sources.service import DataSourceService
 from baserow.contrib.builder.pages.exceptions import PageNotInBuilder
 from baserow.contrib.database.views.view_filters import EqualViewFilterType
 from baserow.core.exceptions import PermissionException
-from baserow.core.services.exceptions import InvalidServiceTypeDispatchSource
+from baserow.core.services.exceptions import (
+    InvalidServiceTypeDispatchSource,
+    ServiceImproperlyConfiguredDispatchException,
+)
 from baserow.core.services.models import Service
 from baserow.core.services.registries import DispatchTypes, service_type_registry
 from baserow.test_utils.helpers import AnyStr
@@ -90,7 +92,7 @@ def test_create_data_source_with_service_type_for_different_dispatch_type(
 
     service_type = service_type_registry.get("local_baserow_upsert_row")
 
-    assert service_type.dispatch_type != DispatchTypes.DISPATCH_DATA_SOURCE
+    assert not service_type.can_be_dispatched_as(DispatchTypes.DATA)
 
     with pytest.raises(InvalidServiceTypeDispatchSource):
         DataSourceService().create_data_source(
@@ -310,7 +312,7 @@ def test_update_data_source_with_service_type_for_different_dispatch_type(
     data_source = data_fixture.create_builder_data_source(user=user)
 
     new_service_type = service_type_registry.get("local_baserow_upsert_row")
-    assert new_service_type.dispatch_type != DispatchTypes.DISPATCH_DATA_SOURCE
+    assert not new_service_type.can_be_dispatched_as(DispatchTypes.DATA)
 
     with pytest.raises(InvalidServiceTypeDispatchSource):
         DataSourceService().update_data_source(
@@ -572,7 +574,7 @@ def test_dispatch_data_source_improperly_configured(data_fixture):
         HttpRequest(), page, only_expose_public_allowed_properties=False
     )
 
-    with pytest.raises(DataSourceImproperlyConfigured):
+    with pytest.raises(ServiceImproperlyConfiguredDispatchException):
         DataSourceService().dispatch_data_source(user, data_source, dispatch_context)
 
 
@@ -656,7 +658,7 @@ def test_remove_unused_field_names(row, field_names, updated_row):
         ["1", "2", "3"],
     ),
 )
-def test_dispatch_data_sources_excludes_unused_get_row_data_sources(
+def test_dispatch_data_sources_excludes_unused_fields_in_non_list_data_sources(
     data_fixture, data_source_row_ids
 ):
     """
@@ -703,15 +705,15 @@ def test_dispatch_data_sources_excludes_unused_get_row_data_sources(
             )
         )
 
-    # We are testing the logic that excludes Data Sources from the results.
+    # We are testing the logic that excludes fields from the results.
     # We aren't testing how the field names themselves are derived; that is
     # tested elsewhere.
     #
     # To simplify the test, we are mocking the allowed field names. The
     # alternative is to create an Element with a formula for each data
     # source we want to test.
-    field_names = [f"field_{field.id}" for field in fields]
-    external_public_allowed_properties = {
+    field_names = [field.db_column for field in fields]
+    internal_allowed_properties = {
         data_source.service.id: field_names for data_source in data_sources
     }
 
@@ -720,7 +722,9 @@ def test_dispatch_data_sources_excludes_unused_get_row_data_sources(
         new_callable=PropertyMock,
     ) as mock_public_allowed_properties:
         mock_public_allowed_properties.return_value = {
-            "external": external_public_allowed_properties
+            "internal": internal_allowed_properties,
+            "external": {},
+            "all": internal_allowed_properties,
         }
         dispatch_context = BuilderDispatchContext(
             HttpRequest(), page, only_expose_public_allowed_properties=True
@@ -737,15 +741,14 @@ def test_dispatch_data_sources_excludes_unused_get_row_data_sources(
     for data_source in data_sources:
         row = result[data_source.id]
         for field in fields:
-            field_name = f"field_{field.id}"
-            assert field_name not in row
+            assert field.db_column not in row
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "data_source_fruit_names", (["Fruit Roll-up", "Gobstopper", "Twix"],)
 )
-def test_dispatch_data_sources_excludes_unused_list_rows_data_sources(
+def test_dispatch_data_sources_excludes_unused_fields_in_list_data_sources(
     data_fixture, data_source_fruit_names
 ):
     """
@@ -794,7 +797,7 @@ def test_dispatch_data_sources_excludes_unused_list_rows_data_sources(
         )
         data_sources.append(data_source)
 
-    # We are testing the logic that excludes Data Sources from the results.
+    # We are testing the logic that excludes fields from the results.
     # We aren't testing how the field names themselves are derived; that is
     # tested elsewhere.
     #
@@ -802,7 +805,7 @@ def test_dispatch_data_sources_excludes_unused_list_rows_data_sources(
     # alternative is to create an Element with a formula for each data
     # source we want to test.
     field_names = [f"field_{field.id}" for field in fields]
-    external_public_allowed_properties = {
+    internal_allowed_properties = {
         data_source.service.id: field_names for data_source in data_sources
     }
 
@@ -811,7 +814,9 @@ def test_dispatch_data_sources_excludes_unused_list_rows_data_sources(
         new_callable=PropertyMock,
     ) as mock_public_allowed_properties:
         mock_public_allowed_properties.return_value = {
-            "external": external_public_allowed_properties
+            "internal": internal_allowed_properties,
+            "external": {},
+            "all": internal_allowed_properties,
         }
         dispatch_context = BuilderDispatchContext(
             HttpRequest(), page, only_expose_public_allowed_properties=True
@@ -820,9 +825,13 @@ def test_dispatch_data_sources_excludes_unused_list_rows_data_sources(
             user, data_sources, dispatch_context
         )
 
-    # Ensure that the results size equals the number of data sources used
-    # in the page.
-    assert len(result.keys()) == len(data_sources)
+    # Ensure the non public fields aren't in the result
+    for data_source in data_sources:
+        ds_result = result[data_source.id]
+        assert ds_result == {
+            "has_next_page": False,
+            "results": [{}],
+        }
 
 
 @pytest.mark.django_db

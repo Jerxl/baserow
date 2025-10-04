@@ -9,6 +9,7 @@ import {
   QUERY_PARAM_TYPE_HANDLER_FUNCTIONS,
 } from '@baserow/modules/builder/enums'
 import { extractSubSchema } from '@baserow/modules/core/utils/schema'
+import { handleDispatchError } from '@baserow/modules/builder/utils/error'
 
 export class DataSourceDataProviderType extends DataProviderType {
   constructor(...args) {
@@ -28,6 +29,23 @@ export class DataSourceDataProviderType extends DataProviderType {
     return this.app.i18n.t('dataProviderType.dataSource')
   }
 
+  showDataSourceErrors(page, failedDataSources) {
+    failedDataSources.forEach(({ id, error }) => {
+      const fakeError = { response: { data: error } }
+      const dataSource = this.app.store.getters[
+        'dataSource/getPageDataSourceById'
+      ](page, id)
+      const dataSourceName = dataSource?.name || `Data Source ${id}`
+      handleDispatchError(
+        fakeError,
+        this.app,
+        this.app.i18n.t('builderToast.errorDataSourceDispatch', {
+          name: dataSourceName,
+        })
+      )
+    })
+  }
+
   /**
    * Dispatch all the shared data sources.
    * @param {Object} applicationContext
@@ -40,7 +58,7 @@ export class DataSourceDataProviderType extends DataProviderType {
     const dataSources =
       this.app.store.getters['dataSource/getPageDataSources'](page)
 
-    await this.app.store.dispatch(
+    const failedDataSources = await this.app.store.dispatch(
       'dataSourceContent/fetchPageDataSourceContent',
       {
         page,
@@ -52,6 +70,8 @@ export class DataSourceDataProviderType extends DataProviderType {
         mode: applicationContext.mode,
       }
     )
+
+    this.showDataSourceErrors(page, failedDataSources)
   }
 
   /**
@@ -64,7 +84,7 @@ export class DataSourceDataProviderType extends DataProviderType {
     )
 
     // Dispatch the data sources
-    await this.app.store.dispatch(
+    const failedDataSources = await this.app.store.dispatch(
       'dataSourceContent/fetchPageDataSourceContent',
       {
         page: applicationContext.page,
@@ -76,6 +96,8 @@ export class DataSourceDataProviderType extends DataProviderType {
         mode: applicationContext.mode,
       }
     )
+
+    this.showDataSourceErrors(applicationContext.page, failedDataSources)
   }
 
   getDataSourceDispatchContext(applicationContext) {
@@ -93,6 +115,7 @@ export class DataSourceDataProviderType extends DataProviderType {
       applicationContext.page,
       this.app.store.getters['page/getSharedPage'](applicationContext.builder),
     ]
+
     const dataSource = this.app.store.getters[
       'dataSource/getPagesDataSourceById'
     ](pages, parseInt(dataSourceId))
@@ -157,17 +180,28 @@ export class DataSourceDataProviderType extends DataProviderType {
       applicationContext.page,
     ]
 
-    const dataSources =
+    const allDataSources =
       this.app.store.getters['dataSource/getPagesDataSources'](pages)
+
+    // If we have a data source id in the application context we keep data sources
+    // until this one because we can't use the ones after
+    const dataSources = applicationContext.dataSource?.id
+      ? _.takeWhile(
+          allDataSources,
+          ({ id }) => id !== applicationContext.dataSource.id
+        )
+      : allDataSources
 
     const result = Object.fromEntries(
       dataSources
-        .map((dataSource) => {
+        .map((dataSource, index) => {
           const dsSchema = this.getDataSourceSchema(dataSource)
           if (dsSchema) {
-            delete dsSchema.$schema
+            // We don't use the schema directly as it comes from the store and can't
+            // be mutated
+            return [dataSource.id, { ...dsSchema, order: index }]
           }
-          return [dataSource.id, dsSchema]
+          return [dataSource.id, null]
         })
         .filter(([, schema]) => schema)
     )
@@ -238,8 +272,8 @@ export class DataSourceContextDataProviderType extends DataProviderType {
 
   getDataSchema(applicationContext) {
     const pages = [
-      applicationContext.page,
       this.app.store.getters['page/getSharedPage'](applicationContext.builder),
+      applicationContext.page,
     ]
 
     const dataSources =
@@ -248,12 +282,16 @@ export class DataSourceContextDataProviderType extends DataProviderType {
     const contextDataSchema = Object.fromEntries(
       dataSources
         .filter((dataSource) => dataSource?.type)
-        .map((dataSource) => [
-          dataSource.id,
-          this.app.$registry
+        .map((dataSource, index) => {
+          const dsSchema = this.app.$registry
             .get('service', dataSource.type)
-            .getContextDataSchema(dataSource),
-        ])
+            .getContextDataSchema(dataSource)
+
+          if (dsSchema) {
+            dsSchema.order = index
+          }
+          return [dataSource.id, dsSchema]
+        })
         .filter(([, schema]) => schema)
     )
 
@@ -854,7 +892,7 @@ export class PreviousActionDataProviderType extends DataProviderType {
     const page = applicationContext.page
 
     const previousActions = this.app.store.getters[
-      'workflowAction/getElementPreviousWorkflowActions'
+      'builderWorkflowAction/getElementPreviousWorkflowActions'
     ](page, applicationContext.element.id, applicationContext.workflowAction)
 
     const previousActionSchema = _.chain(previousActions)
@@ -888,7 +926,7 @@ export class PreviousActionDataProviderType extends DataProviderType {
       const workflowActionId = parseInt(pathParts[1])
 
       const action = this.app.store.getters[
-        'workflowAction/getWorkflowActionById'
+        'builderWorkflowAction/getWorkflowActionById'
       ](page, workflowActionId)
 
       if (!action) {

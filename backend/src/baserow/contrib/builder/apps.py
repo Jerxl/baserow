@@ -277,12 +277,14 @@ class BuilderConfig(AppConfig):
 
         from .workflow_actions.registries import builder_workflow_action_type_registry
         from .workflow_actions.workflow_action_types import (
+            CoreHttpRequestActionType,
+            CoreSMTPEmailActionType,
             CreateRowWorkflowActionType,
             DeleteRowWorkflowActionType,
             LogoutWorkflowActionType,
             NotificationWorkflowActionType,
             OpenPageWorkflowActionType,
-            RefreshDataSourceWorkflowAction,
+            RefreshDataSourceWorkflowActionType,
             UpdateRowWorkflowActionType,
         )
 
@@ -293,8 +295,10 @@ class BuilderConfig(AppConfig):
         builder_workflow_action_type_registry.register(DeleteRowWorkflowActionType())
         builder_workflow_action_type_registry.register(LogoutWorkflowActionType())
         builder_workflow_action_type_registry.register(
-            RefreshDataSourceWorkflowAction()
+            RefreshDataSourceWorkflowActionType()
         )
+        builder_workflow_action_type_registry.register(CoreHttpRequestActionType())
+        builder_workflow_action_type_registry.register(CoreSMTPEmailActionType())
 
         from .elements.collection_field_types import (
             BooleanCollectionFieldType,
@@ -322,6 +326,12 @@ class BuilderConfig(AppConfig):
         from .data_sources.receivers import connect_to_data_source_pre_delete_signal
 
         connect_to_data_source_pre_delete_signal()
+
+        from baserow.contrib.builder.workflow_actions.receivers import (
+            connect_to_builder_workflow_action_pre_delete_signal,
+        )
+
+        connect_to_builder_workflow_action_pre_delete_signal()
 
         # The signals must always be imported last because they use the registries
         # which need to be filled first.

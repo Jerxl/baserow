@@ -156,6 +156,32 @@ export class FieldLevelPermissionsPaidFeature extends PaidFeature {
   }
 }
 
+export class AssistantPaidFeature extends PaidFeature {
+  static getType() {
+    return 'assistant'
+  }
+
+  getPlan() {
+    return 'Advanced'
+  }
+
+  getIconClass() {
+    return 'iconoir-sparks'
+  }
+
+  getName() {
+    return this.app.i18n.t('enterpriseFeatures.assistant')
+  }
+
+  getImage() {
+    return '/img/features/assistant.png'
+  }
+
+  getContent() {
+    return this.app.i18n.t('enterpriseFeatures.assistantContent')
+  }
+}
+
 export class CoBrandingPaidFeature extends PaidFeature {
   static getType() {
     return 'co_branding'
@@ -205,5 +231,109 @@ export class SupportPaidFeature extends PaidFeature {
 
   getContent() {
     return this.app.i18n.t('enterpriseFeatures.supportContent')
+  }
+}
+
+export class BuilderBrandingPaidFeature extends PaidFeature {
+  static getType() {
+    return 'builder_branding'
+  }
+
+  getPlan() {
+    return 'Advanced'
+  }
+
+  getIconClass() {
+    return 'iconoir-eye-close'
+  }
+
+  getName() {
+    return this.app.i18n.t('enterpriseFeatures.builderBranding')
+  }
+
+  getImage() {
+    return null
+  }
+
+  getContent() {
+    return this.app.i18n.t('enterpriseFeatures.builderBrandingContent')
+  }
+}
+
+export class BuilderFileInputElementPaidFeature extends PaidFeature {
+  static getType() {
+    return 'builder_file_input'
+  }
+
+  getPlan() {
+    return 'Advanced'
+  }
+
+  getIconClass() {
+    return 'iconoir-attachment'
+  }
+
+  getName() {
+    return this.app.i18n.t('enterpriseFeatures.builderFileInputElement')
+  }
+
+  getImage() {
+    return null
+  }
+
+  getContent() {
+    return this.app.i18n.t('enterpriseFeatures.builderFileInputElementContent')
+  }
+}
+
+export class BuilderCustomCodePaidFeature extends PaidFeature {
+  static getType() {
+    return 'builder_custom_code'
+  }
+
+  getPlan() {
+    return 'Advanced'
+  }
+
+  getIconClass() {
+    return 'iconoir-code-brackets'
+  }
+
+  getName() {
+    return this.app.i18n.t('enterpriseFeatures.builderCustomCode')
+  }
+
+  getImage() {
+    return null
+  }
+
+  getContent() {
+    return this.app.i18n.t('enterpriseFeatures.builderCustomCodeContent')
+  }
+}
+
+export class DateDependencyPaidFeature extends PaidFeature {
+  static getType() {
+    return 'date_dependency'
+  }
+
+  getPlan() {
+    return 'Advanced'
+  }
+
+  getIconClass() {
+    return 'baserow-icon-dependency'
+  }
+
+  getName() {
+    return this.app.i18n.t('enterpriseFeatures.dateDependency')
+  }
+
+  getImage() {
+    return '/img/features/date_dependency.png'
+  }
+
+  getContent() {
+    return this.app.i18n.t('enterpriseFeatures.dateDependencyContent')
   }
 }

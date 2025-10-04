@@ -29,18 +29,18 @@ def test_dispatch_context_page_range():
 
     dispatch_context = BuilderDispatchContext(request, None)
 
-    assert dispatch_context.range(None) == [0, 20]
+    assert dispatch_context.range(None) == [0, None]
 
     request.GET = {"offset": "-20", "count": "-10"}
 
     dispatch_context = BuilderDispatchContext(request, None)
 
-    assert dispatch_context.range(None) == [0, 1]
+    assert dispatch_context.range(None) == [0, 0]
 
 
 @pytest.mark.django_db
 @patch("baserow.contrib.builder.handler.get_builder_used_property_names")
-def test_dispatch_context_page_from_context(mock_get_field_names, data_fixture):
+def test_dispatch_context_page_clone(mock_get_field_names, data_fixture):
     mock_get_field_names.return_value = {"all": {}, "external": {}, "internal": {}}
 
     user = data_fixture.create_user()
@@ -64,9 +64,8 @@ def test_dispatch_context_page_from_context(mock_get_field_names, data_fixture):
     dispatch_context.annotated_data = "foobar"
 
     dispatch_context.cache = {"key": "value"}
-    new_dispatch_context = BuilderDispatchContext.from_context(
-        dispatch_context, offset=5, count=1
-    )
+    new_dispatch_context = dispatch_context.clone(offset=5, count=1)
+
     assert getattr(new_dispatch_context, "annotated_data", None) is None
     assert new_dispatch_context.cache == {"key": "value"}
     assert new_dispatch_context.request == request
@@ -462,7 +461,7 @@ def test_builder_dispatch_context_public_allowed_properties_is_cached(
     }
 
     # Initially calling the property should cause a bunch of DB queries.
-    with django_assert_num_queries(9):
+    with django_assert_num_queries(10):
         result = dispatch_context.public_allowed_properties
         assert result == expected_results
 

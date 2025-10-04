@@ -12,6 +12,8 @@ from baserow.core.registry import (
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractUser
 
+    from baserow.core.models import TrashEntry
+
 
 class TrashableItemType(ModelInstanceMixin, Instance, ABC):
     """
@@ -87,7 +89,7 @@ class TrashableItemType(ModelInstanceMixin, Instance, ABC):
         """
 
         trashed_item.trashed = False
-        trashed_item.save()
+        trashed_item.save(update_fields=["trashed"])
 
     @abstractmethod
     def get_name(self, trashed_item: Any) -> str:
@@ -113,7 +115,12 @@ class TrashableItemType(ModelInstanceMixin, Instance, ABC):
 
         pass
 
-    def trash(self, item_to_trash: Any, requesting_user, trash_entry):
+    def trash(
+        self,
+        item_to_trash: Any,
+        requesting_user: "AbstractUser",
+        trash_entry: "TrashEntry",
+    ):
         """
         Saves trashed=True on the provided item and should be overridden to
         perform any other cleanup and trashing other items related to
@@ -126,7 +133,7 @@ class TrashableItemType(ModelInstanceMixin, Instance, ABC):
         """
 
         item_to_trash.trashed = True
-        item_to_trash.save()
+        item_to_trash.save(update_fields=["trashed"])
 
     @abstractmethod
     def get_restore_operation_type(
@@ -149,6 +156,18 @@ class TrashableItemType(ModelInstanceMixin, Instance, ABC):
 
     def get_owner(self, trashed_item: Any) -> Optional["AbstractUser"]:
         return None
+
+    def get_additional_restoration_data(self, trashed_item: Any) -> Dict[str, Any]:
+        """
+        Returns additional data that should be stored in the trash entry when restoring
+        this item. This can be used to store additional information that is needed
+        during the restoration process.
+
+        :param trashed_item: The item that is being restored.
+        :return: A dict with additional data that should be stored in the trash entry.
+        """
+
+        return {}
 
 
 class TrashableItemTypeRegistry(ModelRegistryMixin, Registry):

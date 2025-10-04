@@ -1,5 +1,209 @@
 # Changelog
 
+## Released 1.35.2
+
+### New features
+* [Database] Date dependency - allow to connect two dates as start date/end date, and a duration field, and recalculate other fields if one is modified. [#3735](https://gitlab.com/baserow/baserow/-/issues/3735)
+
+### Bug fixes
+* [Builder] Fix timezone issue with date time picker [#3566](https://gitlab.com/baserow/baserow/-/issues/3566)
+* [Core] Fix a bug in the Guided Tour that caused a Vue warning. [#3721](https://gitlab.com/baserow/baserow/-/issues/3721)
+* [Database] Do not fire for past entries on new webhook [#3811](https://gitlab.com/baserow/baserow/-/issues/3811)
+* [Database] Fix filter group api documentation [#3829](https://gitlab.com/baserow/baserow/-/issues/3829)
+* [Database] Fix the error when submitting form with collaborator field notification enabled in public forms. [#3834](https://gitlab.com/baserow/baserow/-/issues/3834)
+* [Builder] Fixed bug that causes the frontend to crash when an Integration is deleted. [#3835](https://gitlab.com/baserow/baserow/-/issues/3835)
+* [Database] Remove comment operations from Ctrl+Z undo stack to prevent accidental deletions [#3837](https://gitlab.com/baserow/baserow/-/issues/3837)
+* [Database] Fix a bug with frontend view filters when the root group doesn't have filters. [#3839](https://gitlab.com/baserow/baserow/-/issues/3839)
+* [Database] Fix button loading animation of publicly shared view login page.
+* [Database] Fix PostgreSQL update with multiple primary keys.
+* [Core] Improve SSR performance by only extending the translations once.
+* [Database] Prevent multiple concurrent `update_search_data` tasks from being scheduled.
+* [Core] Prevent the sync templates task from being scheduled multiple times concurrently.
+* [Builder] Reload data source information on authentication
+* [Builder] Resolved a bug which prevented formula fields from being filtered upon by external users.
+* [Builder] Resolved a table and repeat element bug which inadvertently displayed an error popup.
+
+### Refactors
+* [Core] Update backend and frontend dependencies 2025-09-29
+
+
+## Released 1.35.1
+
+### New features
+* [Builder] Allow to set CSS classes for any element [#3752](https://gitlab.com/baserow/baserow/-/issues/3752)
+
+### Bug fixes
+* [Database] Added missing translations for ImportFileModal.vue [#3802](https://gitlab.com/baserow/baserow/-/issues/3802)
+* [Database] Clears the pendingsearchvalueupdate entries of a table where the workspace table does not exist anymore.
+* [Database] Fix a performance regression when deleting rows.
+* [Database] Fix performance bug selecting from pendingsearchvalueupdate table.
+* [Builder] Resolved a table element bug which allowed users to mark non-filterable fields as filterable to external users.
+
+
+## Released 1.35.0
+
+### New features
+* [Database] Show an asterisk (*) to indicate required fields in forms [#2704](https://gitlab.com/baserow/baserow/-/issues/2704)
+* [Dashboard] Add pie and doughnut charts [#3552](https://gitlab.com/baserow/baserow/-/issues/3552)
+* [Database] Allow application selection during workspace export [#3734](https://gitlab.com/baserow/baserow/-/issues/3734)
+* [Builder] Add environment variable to allow sending request to internal IPs with HTTP request action [#](https://gitlab.com/baserow/baserow/-/issues/)
+* [Core] Show highest role on admin user listing page. [#3754](https://gitlab.com/baserow/baserow/-/issues/3754)
+* [Database] Two-way PostgreSQL data sync. [#3082](https://gitlab.com/baserow/baserow/-/issues/3082)
+
+### Bug fixes
+* [Database] Deactivate data sync and notify user when no proper license is available [#3562](https://gitlab.com/baserow/baserow/-/issues/3562)
+* [Database] Skipped fields during CSV import will not overwrite table data [#3652](https://gitlab.com/baserow/baserow/-/issues/3652)
+* [Builder] Properly handle error in HTTP request action [#3749](https://gitlab.com/baserow/baserow/-/issues/3749)
+* [Builder] Don't show an error message for unused data source [#3760](https://gitlab.com/baserow/baserow/-/issues/3760)
+* [Database] Fix undo for single select with default value [#3762](https://gitlab.com/baserow/baserow/-/issues/3762)
+* [Builder] Resolved an issue which prevented application builder data sources from being able to read from data-synced tables. [#3763](https://gitlab.com/baserow/baserow/-/issues/3763)
+* [Builder] Fix stuck in loading state after field configuration is fixed [#3765](https://gitlab.com/baserow/baserow/-/issues/3765)
+* [Database] Fix form single select and multiple select default values when options are restricted [#3769](https://gitlab.com/baserow/baserow/-/issues/3769)
+* [Database] Fix count formula for link row fields with null values [#3770](https://gitlab.com/baserow/baserow/-/issues/3770)
+* [Database] Fix formula field dependency ordering on row deletion [#3772](https://gitlab.com/baserow/baserow/-/issues/3772)
+* [Builder] Allow ISO string as value for date fields [#3776](https://gitlab.com/baserow/baserow/-/issues/3776)
+* [Database] Fix empty filters that break real-time filtering with OR condition [#3791](https://gitlab.com/baserow/baserow/-/issues/3791)
+* [Database] Fix for skipped_fields being None [#3796](https://gitlab.com/baserow/baserow/-/issues/3796)
+* [Database] Do not pass SelectOptionDoesNotBelongToField to sentry [#3797](https://gitlab.com/baserow/baserow/-/issues/3797)
+* [Database] Fix duplicated results from OR filters [#3799](https://gitlab.com/baserow/baserow/-/issues/3799)
+* [Database] Handle NaN in export_value for NumberField [#3800](https://gitlab.com/baserow/baserow/-/issues/3800)
+* [Database] Fix adhoc row coloring and permissions bug.
+* [Database] Fix broken export/import with broken via dependency
+* [Builder] Fix crash when toggling the share status of a used data source
+* [Builder] Fix error while duplicating an application referencing a default role for a deleted data source
+
+### Refactors
+* [Core] Fix grammar in workspace invitation related emails. [#3775](https://gitlab.com/baserow/baserow/-/issues/3775)
+* [Core] All lock_expiry to add singleton celery tasks.
+
+
+## Released 1.34.5
+
+### Bug fixes
+* [Database] Speed up a slow query to update search vectors and automatically remove stale entries from the pending updates table.
+
+### Refactors
+* [Builder] Improve performances of page data sources dispatch endpoint
+* [Core] Process storage usage update more often
+
+
+## Released 1.34.4
+
+### Bug fixes
+* [Database] Fix Field `id` expected by got dict error
+
+
+## Released 1.34.3
+
+### New features
+* [Dashboard] Separate bar and line charts as new chart options [#3663](https://gitlab.com/baserow/baserow/-/issues/3663)
+
+### Bug fixes
+* [Database] Handle empty number_decimal_places value for number formula field [#3616](https://gitlab.com/baserow/baserow/-/issues/3616)
+* [Builder] Remove toast in the editor as it is confusing [#3750](https://gitlab.com/baserow/baserow/-/issues/3750)
+* [Database] Do not re-raise mapped exceptions when running jobs [#3753](https://gitlab.com/baserow/baserow/-/issues/3753)
+* [Builder] Fix font family from theme not applied to previewed/published page
+* [Core] Fixed issue where applications failed to load properly with multiple workspaces
+* [Builder] Resolved an issue which prevented data sources from being able to choose a specific view.
+* [Database] Stop scheduling search tasks if the workspace is None (i.e. snapshots)
+
+### Refactors
+* [Builder] Automatically delete services when workflow actions are deleted
+* [Core] Remove obsolete compose versions
+
+
+## Released 1.34.2
+
+### Bug fixes
+* [Builder] Resolved an issue which prevented the table element's button events from working correctly.
+
+
+## Released 1.34.1
+
+### Bug fixes
+* [Builder] Fix error when a shared data source dispatch fails
+* [Core] Fix font lighter default css bug.
+* [Database] Fix minor issues after the TSVectors refactor.
+
+
+## Released 1.34.0
+
+### New features
+* [Database] Limit the number of linked items returned by default in views. [#161](https://gitlab.com/baserow/baserow/-/issues/161)
+* [Database] Add ability to select multiple rows via checkbox or keyboard shortcut for bulk actions [#1923](https://gitlab.com/baserow/baserow/-/issues/1923)
+* [Builder] Allow to add custom CSS/JS and external scripts to a published application [#2344](https://gitlab.com/baserow/baserow/-/issues/2344)
+* [Database] Optionally auto sync newly added properties to the data sync. [#3423](https://gitlab.com/baserow/baserow/-/issues/3423)
+* [Dashboard] Group aggregated values into 'Other' bucket when the number of buckets is not sufficient [#3549](https://gitlab.com/baserow/baserow/-/issues/3549)
+* [Builder] Error messages are displayed in the editor when an element, an action or a data source is misconfigured [#3550](https://gitlab.com/baserow/baserow/-/issues/3550)
+* [Builder] Improve error message for data source and action errors [#3550](https://gitlab.com/baserow/baserow/-/issues/3550)
+* [Builder] Allow sending emails with SMTP [#3551](https://gitlab.com/baserow/baserow/-/issues/3551)
+* [Builder] User can define the default count of records returned by the Local Baserow List Rows data source. [#3673](https://gitlab.com/baserow/baserow/-/issues/3673)
+* [Builder] Allow to reference previous data source content from a following data source [#3711](https://gitlab.com/baserow/baserow/-/issues/3711)
+* [Database] Add support for 'unique with empty' constraint [#647](https://gitlab.com/baserow/baserow/-/issues/647)
+* [Core] Allow configuring PostgreSQL read-only replicas.
+* [Builder] Add application builder guided tour.
+* [Database] Password field API endpoint authentication. [#2321](https://gitlab.com/baserow/baserow/-/issues/2321)
+* [Core] Remember instance ID when navigating to pricing page.
+
+### Bug fixes
+* [Builder] Fix broken user source authentication for duplicated applications [#3391](https://gitlab.com/baserow/baserow/-/issues/3391)
+* [Database] Fix for Collaborator dropdown avatars overlap with created by/modified fields in row editor [#3607](https://gitlab.com/baserow/baserow/-/issues/3607)
+* [Database] Fix self reference table look bug. [#3620](https://gitlab.com/baserow/baserow/-/issues/3620)
+* [Database] Allow scrolling in field description tooltip. [#3648](https://gitlab.com/baserow/baserow/-/issues/3648)
+* [Database] Fix for copy to clipboard fails if document does not have focus on Chrome [#3660](https://gitlab.com/baserow/baserow/-/issues/3660)
+* [Database] Fix bug where clearing the cell with `DEL` breaks the file field component [#3671](https://gitlab.com/baserow/baserow/-/issues/3671)
+* [Database] Fix a bug while showing form views in templates [#3674](https://gitlab.com/baserow/baserow/-/issues/3674)
+* [Database] Prevent form submit when file is renamed [#3681](https://gitlab.com/baserow/baserow/-/issues/3681)
+* [Database] Prevent removing brackets in formula when a field is renamed. [#3693](https://gitlab.com/baserow/baserow/-/issues/3693)
+* [Database] Fixed issue with special characters being incorrectly rendered in distribution aggregation. [#3695](https://gitlab.com/baserow/baserow/-/issues/3695)
+* [Builder] Fix missing licences in published websites [#3725](https://gitlab.com/baserow/baserow/-/issues/3725)
+* [Database] Handle DoesNotExist exception in websocket background tasks [#3729](https://gitlab.com/baserow/baserow/-/issues/3729)
+* [Database] Additional fixes to number formatting when comma is used as decimal separator.
+* [Builder] Context data formula for list row data source were broken on published version
+* [Database] Fix Airtable import filter bugs.
+* [Builder] Fix crash when a previous action isn't configured
+* [Builder] Fix crashing builder when a choice element value formula is referencing a missing data
+* [Database] Fix bug where the MCP server didn't accept the single and multiple select ids correctly.
+* [Core] Fix BASEROW_OSS_ONLY environment variable.
+* [Database] Fix Rich Text Editor floating menus
+* [Database] Fix rich text field cell selected border styling bug.
+
+### Refactors
+* [Database] Improved search data management - use workspace-wide search table to store tsvectors instead of per-column storage [#3548](https://gitlab.com/baserow/baserow/-/issues/3548)
+* [Database] Reduce number of MCP tools by using single tool for rows list and delete.
+* [Database] Add the ability to return row_ids from UPDATE statements.
+* [Core] Use fakredis as default cache backend for tests
+
+
+## Released 1.33.4
+
+### New features
+* [Builder] Add the HTTP request action to request endpoint [#3234](https://gitlab.com/baserow/baserow/-/issues/3234)
+* [Dashboard] Add ability to choose between bar and line series [#3514](https://gitlab.com/baserow/baserow/-/issues/3514)
+* [Dashboard] Jira data sync personal access token authentication. [#3558](https://gitlab.com/baserow/baserow/-/issues/3558)
+
+### Bug fixes
+* [Database] Fix rating filter style reactivity [#3523](https://gitlab.com/baserow/baserow/-/issues/3523)
+* [Builder] Login action are now executed even if the user is already authenticated [#3630](https://gitlab.com/baserow/baserow/-/issues/3630)
+* [Builder] Ensure that in the Theme settings, the Table styles are rendered in the preview panel. [#3631](https://gitlab.com/baserow/baserow/-/issues/3631)
+* [Builder] Fix styling issues when using Text element with markdown format. [#3632](https://gitlab.com/baserow/baserow/-/issues/3632)
+* [Builder] Fix code blocks in markdown code for text element [#3634](https://gitlab.com/baserow/baserow/-/issues/3634)
+* [Database] Fixed bug where formula values reset when moving rows. [#3640](https://gitlab.com/baserow/baserow/-/issues/3640)
+* [Database] Fix bug where empty numeric fields were displayed as `NaN` in the row edit modal and in forms [#3651](https://gitlab.com/baserow/baserow/-/issues/3651)
+* [Builder] Data input type was lost between two reload
+
+### Refactors
+* [Database] Send row history broadcast per table, not per row [#3646](https://gitlab.com/baserow/baserow/-/issues/3646)
+* [Core] Add pytest-testmon to only run tests affected by changes.
+* [Core] Automatically fill the premium seats when registering the license.
+* [Database] Introduced `calculate_storage_usage_workspace` hook and `before_rows_create` signal.
+* [Core] Minor guided tour changes for reversed trial.
+* [Database] Rename 'has' to 'has any of' 
+* [Builder] Retry workflow actions on deadlocks
+* [Core] Updated backend dependencies to fix dependency security vulnerabilities.
+* [Core] Updated frontend dependencies to fix dependency security vulnerabilities.
+
+
 ## Released 1.33.3
 
 ### New features

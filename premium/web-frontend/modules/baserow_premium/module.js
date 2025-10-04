@@ -12,8 +12,11 @@ import pl from './locales/pl.json'
 import ko from './locales/ko.json'
 
 export default function () {
-  this.nuxt.hook('i18n:extend-messages', (additionalMessages) => {
+  let alreadyExtended = false
+  this.nuxt.hook('i18n:extend-messages', function (additionalMessages) {
+    if (alreadyExtended) return
     additionalMessages.push({ en, fr, nl, de, es, it, pl, ko })
+    alreadyExtended = true
   })
 
   // Register new alias to the web-frontend directory.
@@ -37,8 +40,9 @@ export default function () {
   if (this.options.publicRuntimeConfig) {
     this.options.publicRuntimeConfig.BASEROW_PREMIUM_GROUPED_AGGREGATE_SERVICE_MAX_SERIES =
       process.env.BASEROW_PREMIUM_GROUPED_AGGREGATE_SERVICE_MAX_SERIES || 3
+    // This environment variable exist for the SaaS to override the pricing URL, so
+    // that the user can be redirected to the correct URL.
     this.options.publicRuntimeConfig.BASEROW_PRICING_URL =
-      process.env.BASEROW_PRICING_URL ||
-      'https://baserow.io/pricing?version=self-hosted'
+      process.env.BASEROW_PRICING_URL || null
   }
 }

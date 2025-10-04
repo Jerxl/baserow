@@ -19,6 +19,7 @@ import { formulaFieldArrayFilterMixin } from '@baserow/modules/database/arrayFil
 import {
   parseNumberValue,
   formatNumberValue,
+  formatDecimalNumber,
 } from '@baserow/modules/database/utils/number'
 
 import moment from '@baserow/modules/core/moment'
@@ -163,6 +164,7 @@ import RowEditFieldFormula from '@baserow/modules/database/components/row/RowEdi
 import {
   DEFAULT_FORM_VIEW_FIELD_COMPONENT_KEY,
   DEFAULT_SORT_TYPE_KEY,
+  LINKED_ITEMS_DEFAULT_LOAD_COUNT,
 } from '@baserow/modules/database/constants'
 import ViewService from '@baserow/modules/database/services/view'
 import FormService from '@baserow/modules/database/services/view/form'
@@ -346,6 +348,13 @@ export class FieldType extends Registerable {
    *  detailed value is required.
    */
   getDefaultValue(field, flat) {
+    return null
+  }
+
+  /**
+   * Returns the name of the field that contains the default value.
+   */
+  getDefaultValueFieldName() {
     return null
   }
 
@@ -860,13 +869,12 @@ export class FieldType extends Registerable {
    * to determine if the field will be shown in form views.
    */
   canSubmitAnonymousValues(field) {
-    const database = this.app.store.getters['field/getDatabase']
     return (
       !this.isReadOnlyField(field) &&
       this.app.$hasPermission(
         'database.table.field.submit_anonymous_values',
         field,
-        database.workspace.id
+        field.workspace_id
       )
     )
   }
@@ -976,6 +984,28 @@ export class FieldType extends Registerable {
   toBaserowFormulaType(field) {
     return this.getType()
   }
+
+  /**
+   * Checks if all required data for the given field and rows is loaded. Returns true if
+   * any data is missing and needs to be refetched from the server. This is useful, for
+   * example, when copying link row fields with many relations: not all related data is
+   * loaded immediately for performance reasons, but full data is needed for copy/paste
+   * operations.
+   *
+   * @param {Object} field - The field object.
+   * @param {Array} rows - The rows to check.
+   * @returns {boolean} - True if data needs to be refetched, false otherwise.
+   */
+  shouldRefetchFieldData(field, rows) {
+    return false
+  }
+
+  /**
+   * Indicates whether it's possible to enable the database index for a field.
+   */
+  canHaveDbIndex(fieldValues) {
+    return false
+  }
 }
 
 class SelectOptionBaseFieldType extends FieldType {
@@ -1056,8 +1086,13 @@ export class TextFieldType extends FieldType {
     return ''
   }
 
+  getDefaultValueFieldName() {
+    return 'text_default'
+  }
+
   getDefaultValue(field, flat) {
-    return field.text_default || this.getEmptyValue(field)
+    const defaultValueFieldName = this.getDefaultValueFieldName()
+    return field[defaultValueFieldName] || this.getEmptyValue(field)
   }
 
   canUpsert() {
@@ -1105,6 +1140,10 @@ export class TextFieldType extends FieldType {
   }
 
   getCanGroupByInView(field) {
+    return true
+  }
+
+  canHaveDbIndex(fieldValues) {
     return true
   }
 }
@@ -1222,6 +1261,10 @@ export class LongTextFieldType extends FieldType {
 
   getCanGroupByInView(field) {
     return !field.long_text_enable_rich_text
+  }
+
+  canHaveDbIndex(fieldValues) {
+    return true
   }
 }
 
@@ -1604,6 +1647,16 @@ export class LinkRowFieldType extends FieldType {
 
     return false
   }
+
+  shouldRefetchFieldData(field, rows) {
+    return rows.some((row) => {
+      const fieldValue = row[`field_${field.id}`]
+      return (
+        fieldValue?.length === LINKED_ITEMS_DEFAULT_LOAD_COUNT &&
+        !row._?.fullyLoaded
+      )
+    })
+  }
 }
 
 export class NumberFieldType extends FieldType {
@@ -1656,12 +1709,18 @@ export class NumberFieldType extends FieldType {
     return ['text', '1', '9']
   }
 
+  getDefaultValueFieldName() {
+    return 'number_default'
+  }
+
   getDefaultValue(field, flat) {
-    if (field.number_default === null || field.number_default === undefined) {
+    const defaultValueFieldName = this.getDefaultValueFieldName()
+    const defaultValue = field[defaultValueFieldName]
+    if (defaultValue === null || defaultValue === undefined) {
       return null
     }
     const decimalPlaces = field.number_decimal_places || 0
-    return Number(field.number_default).toFixed(decimalPlaces)
+    return new BigNumber(defaultValue).toFixed(decimalPlaces)
   }
 
   canUpsert() {
@@ -1757,7 +1816,7 @@ export class NumberFieldType extends FieldType {
   }
 
   toHumanReadableString(field, value, delimiter = ', ') {
-    return NumberFieldType.formatNumber(field, value)
+    return formatDecimalNumber(field, value)
   }
 
   getDocsDataType(field) {
@@ -1828,6 +1887,10 @@ export class NumberFieldType extends FieldType {
     const res = parseNumberValue(field, String(value ?? ''), false)
     return res === null || res.isNaN() ? '' : res.toString()
   }
+
+  canHaveDbIndex(fieldValues) {
+    return true
+  }
 }
 
 BigNumber.config({ EXPONENTIAL_AT: NumberFieldType.getMaxNumberLength() })
@@ -1876,6 +1939,10 @@ export class RatingFieldType extends FieldType {
 
   getSortIndicator() {
     return ['text', '1', '9']
+  }
+
+  getDefaultValueFieldName() {
+    return 'rating_default'
   }
 
   getDefaultValue(field, flat) {
@@ -1976,6 +2043,10 @@ export class RatingFieldType extends FieldType {
   getCanGroupByInView(field) {
     return true
   }
+
+  canHaveDbIndex(fieldValues) {
+    return true
+  }
 }
 
 export class BooleanFieldType extends FieldType {
@@ -2024,8 +2095,13 @@ export class BooleanFieldType extends FieldType {
     return false
   }
 
+  getDefaultValueFieldName() {
+    return 'boolean_default'
+  }
+
   getDefaultValue(field, flat) {
-    return field.boolean_default || this.getEmptyValue(field)
+    const defaultValueFieldName = this.getDefaultValueFieldName()
+    return field[defaultValueFieldName] || this.getEmptyValue(field)
   }
 
   getSortIndicator() {
@@ -2130,6 +2206,10 @@ export class BooleanFieldType extends FieldType {
 
   parseFilterValue(field, value) {
     return this.parseInputValue(field, String(value ?? ''))
+  }
+
+  canHaveDbIndex(fieldValues) {
+    return true
   }
 }
 
@@ -2360,6 +2440,10 @@ class BaseDateFieldType extends FieldType {
 
   toBaserowFormulaType(field) {
     return 'date'
+  }
+
+  canHaveDbIndex(fieldValues) {
+    return true
   }
 }
 
@@ -3188,6 +3272,10 @@ export class FileFieldType extends FieldType {
     return 'file'
   }
 
+  getEmptyValue(field) {
+    return []
+  }
+
   static getIconClass() {
     return 'iconoir-empty-page'
   }
@@ -3637,15 +3725,20 @@ export class SingleSelectFieldType extends SelectOptionBaseFieldType {
     return value1Id === value2Id
   }
 
-  getDefaultValue(field, flat) {
-    if (field.single_select_default != null) {
-      if (flat) {
-        return field.single_select_default
-      }
+  getDefaultValueFieldName() {
+    return 'single_select_default'
+  }
 
-      return field.select_options.find(
-        (option) => option.id === field.single_select_default
+  getDefaultValue(field, flat) {
+    const defaultValueFieldName = this.getDefaultValueFieldName()
+    const defaultValue = field[defaultValueFieldName]
+    if (defaultValue != null) {
+      const defaultValueOption = field.select_options.find(
+        (option) => option.id === defaultValue
       )
+      if (defaultValueOption) {
+        return flat ? defaultValue : defaultValueOption
+      }
     }
     return this.getEmptyValue(field)
   }
@@ -3882,14 +3975,20 @@ export class MultipleSelectFieldType extends SelectOptionBaseFieldType {
     return []
   }
 
+  getDefaultValueFieldName() {
+    return 'multiple_select_default'
+  }
+
   getDefaultValue(field, flat) {
-    if (!field.multiple_select_default) {
+    const defaultValueFieldName = this.getDefaultValueFieldName()
+    const defaultValue = field[defaultValueFieldName]
+    if (defaultValue == null) {
       return this.getEmptyValue(field)
     }
     if (flat) {
-      return field.multiple_select_default
+      return defaultValue
     }
-    return (field.multiple_select_default || [])
+    return (defaultValue || [])
       .map((id) => field.select_options.find((opt) => opt.id === id))
       .filter(Boolean)
   }
@@ -4264,6 +4363,15 @@ export class FormulaFieldType extends mix(
 
   toBaserowFormulaType(field) {
     return this.getFormulaType(field).toBaserowFormulaType(field)
+  }
+
+  canHaveDbIndex(fieldValues) {
+    // Not all the formula types are compatible with the indexes, but the downside
+    // is that the frontend only knows the new formula type after saving, so it's
+    // impossible to preemptively know if indexes are supported. We're therefore
+    // always allowing indexes, and if the formula type is not compatible, the
+    // backend will fail, and will show the correct error in the form.
+    return true
   }
 }
 
@@ -4677,6 +4785,10 @@ export class UUIDFieldType extends FieldType {
   canBeReferencedByFormulaField() {
     return true
   }
+
+  canHaveDbIndex(fieldValues) {
+    return true
+  }
 }
 
 export class AutonumberFieldType extends FieldType {
@@ -4782,6 +4894,10 @@ export class AutonumberFieldType extends FieldType {
   }
 
   canBeReferencedByFormulaField() {
+    return true
+  }
+
+  canHaveDbIndex(fieldValues) {
     return true
   }
 }

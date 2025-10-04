@@ -2,13 +2,14 @@
   <div
     v-if="elementMode === 'editing' || isVisible"
     class="element__wrapper"
-    :class="elementClasses"
+    :class="wrapperClasses"
     :style="elementStyles"
   >
     <div class="element__inner-wrapper">
       <span v-if="showElementId" class="element--element-id">{{
         element.id
       }}</span>
+      <!-- See element store to understand why we are using the element uid as key here -->
       <component
         :is="component"
         :key="element._.uid"
@@ -18,6 +19,7 @@
           page: elementPage,
         }"
         class="element"
+        :class="elementClasses"
         @move="$emit('move', $event)"
       />
     </div>
@@ -25,7 +27,7 @@
 </template>
 
 <script>
-import { resolveColor } from '@baserow/modules/core/utils/colors'
+import { resolveColor, colorContrast } from '@baserow/modules/core/utils/colors'
 import { ThemeConfigBlockType } from '@baserow/modules/builder/themeConfigBlockTypes'
 
 import {
@@ -102,6 +104,9 @@ export default {
     elementType() {
       return this.$registry.get('element', this.element.type)
     },
+    elementClasses() {
+      return this.element.css_classes.replaceAll('"', '')
+    },
     isVisible() {
       const elementType = this.$registry.get('element', this.element.type)
       const isInError = elementType.isInError({
@@ -150,7 +155,7 @@ export default {
         return true
       }
     },
-    elementClasses() {
+    wrapperClasses() {
       if (this.element?.parent_element_id) {
         return {
           'element__wrapper--full-width':
@@ -182,7 +187,6 @@ export default {
                 this.colorVariables
               )
             : 'none',
-
         '--element-background-image':
           this.element.style_background_file !== null
             ? `url(${this.element.style_background_file.url})`
@@ -220,6 +224,15 @@ export default {
           this.element.style_background_radius || 0
         }px`,
         '--element-border-radius': `${this.element.style_border_radius || 0}px`,
+      }
+
+      if (this.element.style_background === BACKGROUND_TYPES.COLOR) {
+        styles['--element-background-color-contrast'] = colorContrast(
+          this.resolveColor(
+            this.element.style_background_color,
+            this.colorVariables
+          )
+        )
       }
 
       if (this.element.style_background_file !== null) {

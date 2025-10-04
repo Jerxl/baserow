@@ -13,7 +13,16 @@
         "enabled": "활성화됨",
         "disabled": "비활성화됨",
         "or": "또는",
-        "and": "그리고"
+        "and": "그리고",
+        "optional": "선택적",
+        "alpha": "알파",
+        "monday": "월요일",
+        "tuesday": "화요일",
+        "wednesday": "수요일",
+        "thursday": "목요일",
+        "friday": "금요일",
+        "saturday": "토요일",
+        "sunday": "일요일"
     },
     "action": {
         "close": "닫기",
@@ -74,14 +83,17 @@
         "automations": "자동화",
         "automationDefaultName": "제목 없는 자동화",
         "automationDesc": "반복적인 작업과 워크플로우를 자동화하세요.",
-        "automation": "자동화"
+        "automation": "자동화",
+        "cantSelectAutomationWorkflowTitle": "자동화를 선택할 수 없습니다.",
+        "cantSelectAutomationWorkflowDescription": "이 자동화에는 워크플로가 없어 선택할 수 없습니다. 사이드바를 사용해 워크플로를 생성하세요."
     },
     "settingType": {
         "account": "계정",
         "password": "비밀번호",
         "emailNotifications": "이메일 알림",
         "tokens": "데이터베이스 토큰",
-        "deleteAccount": "계정 삭제"
+        "deleteAccount": "계정 삭제",
+        "mcpEndpoint": "MCP 서버"
     },
     "userFileUploadType": {
         "file": "내 기기",
@@ -106,7 +118,8 @@
         "minMaxValueField": "필드 값은 {min}에서 {max} 사이여야 합니다.",
         "invalidURL": "유효한 URL을 입력하세요.",
         "email": "필드는 이메일이어야 합니다.",
-        "alreadyInUse": "이 필드 이름은 이미 사용 중입니다."
+        "alreadyInUse": "이 필드 이름은 이미 사용 중입니다.",
+        "copyFailed": "클립보드에 복사하지 못했습니다. 다시 시도해 주세요."
     },
     "permission": {
         "admin": "관리자",
@@ -289,7 +302,9 @@
         "hasDateBefore": "날짜가 이전임",
         "hasDateOnOrBefore": "날짜가 이전 또는 같음",
         "hasNotDateAfter": "날짜가 이후가 아님",
-        "hasDateOnOrAfter": "날짜가 이후 또는 같음"
+        "hasDateOnOrAfter": "날짜가 이후 또는 같음",
+        "hasAnyOf": "다음 중 하나",
+        "hasNotAnyOf": "아느 것도 해당하지 않음"
     },
     "viewType": {
         "grid": "그리드",
@@ -307,7 +322,9 @@
         "field": "필드",
         "row": "행",
         "rows": "행",
-        "view": "뷰"
+        "view": "뷰",
+        "automation_workflow": "자동화 워크플로",
+        "automation_node": "자동화 노드"
     },
     "webhook": {
         "request": "요청",
@@ -421,7 +438,15 @@
         "incompatiblePrimaryFieldTypeTitle": "필드가 호환되지 않습니다",
         "incompatiblePrimaryFieldTypeDescription": "선택한 필드는 호환되지 않아 기본 필드가 될 수 없습니다.",
         "cannotCreateRowsInTableTitle": "행을 생성할 수 없습니다",
-        "cannotCreateRowsInTableDescription": "이 테이블에서 행을 생성할 수 없습니다."
+        "cannotCreateRowsInTableDescription": "이 테이블에서 행을 생성할 수 없습니다.",
+        "databaseDeadlockDescription": "여러 개의 충돌하는 작업이 동시에 데이터에 수행되어 작업을 완료할 수 없습니다. 다시 시도해 주세요.",
+        "databaseUniquePrimaryPropertyNotFoundTitle": "고유한 기본 속성이 없습니다",
+        "databaseUniquePrimaryPropertyNotFoundDescription": "이 문제는 보통 데이터 동기화 소스에 고유한 행 값을 가져올 수 있는 속성이 없을 때 발생합니다. 테이블의 경우, 기본 키가 없을 때 이런 문제가 발생할 수 있습니다.",
+        "databaseDeadlockTitle": "작업 실패",
+        "fieldConstraintTitle": "필드 제약 조건 위반",
+        "fieldConstraintDescription": "제약조건을 적용할 수 없습니다.",
+        "fieldDataConstraintTitle": "필드 데이터 제약 조건 위반",
+        "fieldDataConstraintDescription": "기존 제약 조건 위반으로 인해 작업을 완료할 수 없습니다."
     },
     "importerType": {
         "csv": "CSV 파일 가져오기",
@@ -454,10 +479,12 @@
         "pathParameters": "경로 매개변수",
         "requestBodySchema": "요청 본문 스키마",
         "userFieldNamesDescription": "`user_field_names` GET 매개변수가 제공되고 그 값이 다음 중 하나인 경우: `y`, `yes`, `true`, `t`, `on`, `1`, 또는 빈 문자열, 이 엔드포인트에서 반환되는 필드 이름은 실제 필드 이름이 됩니다.\n\n`user_field_names` GET 매개변수가 제공되지 않거나 위의 값과 일치하지 않는 경우, 반환되는 모든 필드 이름은 `field_` 다음에 필드의 ID가 붙습니다. 예를 들어 `field_1`은 ID가 `1`인 필드를 나타냅니다.",
-        "sendWebhookEventsDescription": "`y`, `yes`, `true`, `t`, `on`, `1`, 또는 빈 문자열로 설정된 경우 작업 후에 웹훅을 트리거하는 플래그 쿼리 매개변수입니다. 기본값은 `true`입니다",
+        "sendWebhookEventsDescription": "`y`, `yes`, `true`, `t`, `on`, `1`로 설정하거나 비워 두면 작업 후 웹훅을 트리거하는 플래그 쿼리 매개변수입니다. 기본값은 `true`입니다",
         "singleRow": "단일",
         "batchRows": "배치",
-        "fileUploads": "파일 업로드"
+        "fileUploads": "파일 업로드",
+        "listTables": "테이블 목록",
+        "apiDocs": "모든 테이블 목록"
     },
     "exporterType": {
         "csv": "CSV로 내보내기"
@@ -590,5 +617,23 @@
         "submit": "테스트 이메일 보내기",
         "success": "테스트 이메일을 성공적으로 보냈습니다",
         "configLink": "이메일 구성 도움말"
+    },
+    "fieldConstraint": {
+        "uniqueWithEmpty": "빈 값을 제외한 고유항목"
+    },
+    "fieldConstraintsSubform": {
+        "title": "제약 조건",
+        "description": "필드 값이 따라야 하는 규칙을 정의합니다.",
+        "addConstraint": "제약 조건 추가",
+        "noConstraintsAvailable": "이 필드 유형에는 제약 조건이 없습니다.",
+        "readonlyFieldMessage": "읽기 전용 필드에는 제약 조건을 적용할 수 없습니다.",
+        "errorGenericData": "기존 데이터 충돌로 인해 필드 제약 조건을 적용할 수 없습니다.",
+        "errorUniqueOrEmpty": "이 필드의 일부 값이 중복되었습니다. 이 제약 조건을 적용하기 전에 중복된 값을 제거하거나 편집하세요.",
+        "errorInvalidConstraint": "이 필드 제약조건은 이 필드 유형에 지원되지 않습니다.",
+        "errorDoesNotSupportDefaultValue": "기본값이 설정되어 있으면 이 제약 조건을 설정할 수 없습니다.",
+        "noConstraintsCompatibleWithDefaultValue": "기본값이 활성화되면 호환되는 제약 조건이 없습니다."
+    },
+    "fieldConstraintParametersText": {
+        "placeholder": "제약 조건 값을 입력하세요"
     }
 }

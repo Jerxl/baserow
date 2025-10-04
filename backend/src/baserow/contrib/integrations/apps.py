@@ -5,6 +5,9 @@ class IntegrationsConfig(AppConfig):
     name = "baserow.contrib.integrations"
 
     def ready(self):
+        from baserow.contrib.integrations.core.integration_types import (
+            SMTPIntegrationType,
+        )
         from baserow.contrib.integrations.local_baserow.integration_types import (
             LocalBaserowIntegrationType,
         )
@@ -12,14 +15,16 @@ class IntegrationsConfig(AppConfig):
         from baserow.core.services.registries import service_type_registry
 
         integration_type_registry.register(LocalBaserowIntegrationType())
+        integration_type_registry.register(SMTPIntegrationType())
 
         from baserow.contrib.integrations.local_baserow.service_types import (
             LocalBaserowAggregateRowsUserServiceType,
             LocalBaserowDeleteRowServiceType,
             LocalBaserowGetRowUserServiceType,
             LocalBaserowListRowsUserServiceType,
-            LocalBaserowRowCreatedTriggerServiceType,
-            LocalBaserowRowUpdatedTriggerServiceType,
+            LocalBaserowRowsCreatedServiceType,
+            LocalBaserowRowsDeletedServiceType,
+            LocalBaserowRowsUpdatedServiceType,
             LocalBaserowUpsertRowServiceType,
         )
 
@@ -28,7 +33,18 @@ class IntegrationsConfig(AppConfig):
         service_type_registry.register(LocalBaserowAggregateRowsUserServiceType())
         service_type_registry.register(LocalBaserowUpsertRowServiceType())
         service_type_registry.register(LocalBaserowDeleteRowServiceType())
-        service_type_registry.register(LocalBaserowRowCreatedTriggerServiceType())
-        service_type_registry.register(LocalBaserowRowUpdatedTriggerServiceType())
+        service_type_registry.register(LocalBaserowRowsCreatedServiceType())
+        service_type_registry.register(LocalBaserowRowsUpdatedServiceType())
+        service_type_registry.register(LocalBaserowRowsDeletedServiceType())
+
+        from baserow.contrib.integrations.core.service_types import (
+            CoreHTTPRequestServiceType,
+            CoreRouterServiceType,
+            CoreSMTPEmailServiceType,
+        )
+
+        service_type_registry.register(CoreHTTPRequestServiceType())
+        service_type_registry.register(CoreSMTPEmailServiceType())
+        service_type_registry.register(CoreRouterServiceType())
 
         import baserow.contrib.integrations.signals  # noqa: F403, F401

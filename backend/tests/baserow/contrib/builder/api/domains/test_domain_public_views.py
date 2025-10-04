@@ -13,16 +13,19 @@ from rest_framework.status import (
 )
 
 from baserow.api.user_files.serializers import UserFileSerializer
-from baserow.contrib.builder.data_sources.exceptions import (
-    DataSourceDoesNotExist,
-    DataSourceImproperlyConfigured,
-)
+from baserow.contrib.builder.data_sources.exceptions import DataSourceDoesNotExist
 from baserow.contrib.builder.elements.models import Element
 from baserow.contrib.builder.pages.models import Page
 from baserow.contrib.database.views.models import SORT_ORDER_ASC
 from baserow.core.exceptions import PermissionException
 from baserow.core.models import Workspace
-from baserow.core.services.exceptions import DoesNotExist, ServiceImproperlyConfigured
+from baserow.core.services.exceptions import (
+    DoesNotExist,
+    InvalidContextContentDispatchException,
+    InvalidContextDispatchException,
+    ServiceImproperlyConfiguredDispatchException,
+    UnexpectedDispatchException,
+)
 from baserow.core.user_sources.user_source_user import UserSourceUser
 
 
@@ -133,55 +136,53 @@ def test_get_public_builder_by_domain_name(api_client, data_fixture):
 
     shared_page = builder_to.shared_page
     workspace = Workspace.objects.get()
-    assert response_json == {
-        "favicon_file": UserFileSerializer(builder_to.favicon_file).data,
-        "id": builder_to.id,
-        "name": builder_to.name,
-        "login_page_id": None,
-        "pages": [
-            {
-                "id": shared_page.id,
-                "name": "__shared__",
-                "path": "__shared__",
-                "path_params": [],
-                "query_params": [],
-                "shared": True,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-            {
-                "id": page.id,
-                "name": page.name,
-                "path": page.path,
-                "path_params": [],
-                "query_params": [],
-                "shared": False,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-            {
-                "id": page2.id,
-                "name": page2.name,
-                "path": page2.path,
-                "path_params": [],
-                "query_params": [],
-                "shared": False,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-        ],
-        "type": "builder",
-        "user_sources": [],
-        "workspace": {
-            "generative_ai_models_enabled": {},
-            "id": workspace.id,
-            "name": workspace.name,
-            "licenses": [],
-        },
+
+    assert (
+        response_json["favicon_file"]
+        == UserFileSerializer(builder_to.favicon_file).data
+    )
+    assert response_json["login_page_id"] is None
+    assert response_json["workspace"] == {
+        "generative_ai_models_enabled": {},
+        "id": workspace.id,
+        "name": workspace.name,
+        "licenses": [],
     }
+    assert response_json["pages"] == [
+        {
+            "id": shared_page.id,
+            "name": "__shared__",
+            "path": "__shared__",
+            "path_params": [],
+            "query_params": [],
+            "shared": True,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+        {
+            "id": page.id,
+            "name": page.name,
+            "path": page.path,
+            "path_params": [],
+            "query_params": [],
+            "shared": False,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+        {
+            "id": page2.id,
+            "name": page2.name,
+            "path": page2.path,
+            "path_params": [],
+            "query_params": [],
+            "shared": False,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+    ]
 
     # Even if I'm authenticated I should be able to see it.
     response = api_client.get(
@@ -268,55 +269,52 @@ def test_get_public_builder_by_id(api_client, data_fixture):
 
     shared_page = page.builder.shared_page
 
-    assert response_json == {
-        "favicon_file": UserFileSerializer(page.builder.favicon_file).data,
-        "id": page.builder.id,
-        "name": page.builder.name,
-        "login_page_id": None,
-        "pages": [
-            {
-                "id": shared_page.id,
-                "name": "__shared__",
-                "path": "__shared__",
-                "path_params": [],
-                "query_params": [],
-                "shared": True,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-            {
-                "id": page.id,
-                "name": page.name,
-                "path": page.path,
-                "path_params": [],
-                "query_params": [],
-                "shared": False,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-            {
-                "id": page2.id,
-                "name": page2.name,
-                "path": page2.path,
-                "path_params": [],
-                "query_params": [],
-                "shared": False,
-                "visibility": Page.VISIBILITY_TYPES.ALL.value,
-                "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
-                "roles": [],
-            },
-        ],
-        "type": "builder",
-        "user_sources": [],
-        "workspace": {
-            "generative_ai_models_enabled": {},
-            "id": page.builder.workspace.id,
-            "name": page.builder.workspace.name,
-            "licenses": [],
-        },
+    assert (
+        response_json["favicon_file"]
+        == UserFileSerializer(page.builder.favicon_file).data
+    )
+    assert response_json["login_page_id"] is None
+    assert response_json["workspace"] == {
+        "generative_ai_models_enabled": {},
+        "id": page.builder.workspace.id,
+        "name": page.builder.workspace.name,
+        "licenses": [],
     }
+    assert response_json["pages"] == [
+        {
+            "id": shared_page.id,
+            "name": "__shared__",
+            "path": "__shared__",
+            "path_params": [],
+            "query_params": [],
+            "shared": True,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+        {
+            "id": page.id,
+            "name": page.name,
+            "path": page.path,
+            "path_params": [],
+            "query_params": [],
+            "shared": False,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+        {
+            "id": page2.id,
+            "name": page2.name,
+            "path": page2.path,
+            "path_params": [],
+            "query_params": [],
+            "shared": False,
+            "visibility": Page.VISIBILITY_TYPES.ALL.value,
+            "role_type": Page.ROLE_TYPES.ALLOW_ALL.value,
+            "roles": [],
+        },
+    ]
 
 
 @pytest.mark.django_db
@@ -405,6 +403,7 @@ def test_get_elements_of_public_builder(api_client, data_fixture):
         "order": "1.00000000000000000000",
         "parent_element_id": None,
         "place_in_container": None,
+        "css_classes": "",
         "visibility": "all",
         "styles": {},
         "style_border_top_color": "border",
@@ -724,14 +723,24 @@ def test_public_dispatch_data_sources_view(
             "The requested data_source does not exist.",
         ),
         (
-            DataSourceImproperlyConfigured,
-            "ERROR_DATA_SOURCE_IMPROPERLY_CONFIGURED",
-            "The data_source configuration is incorrect: ",
+            ServiceImproperlyConfiguredDispatchException,
+            "ERROR_SERVICE_IMPROPERLY_CONFIGURED",
+            "Exception content",
         ),
         (
-            ServiceImproperlyConfigured,
-            "ERROR_DATA_SOURCE_IMPROPERLY_CONFIGURED",
-            "The data_source configuration is incorrect: ",
+            InvalidContextDispatchException,
+            "ERROR_SERVICE_INVALID_DISPATCH_CONTEXT",
+            "Exception content",
+        ),
+        (
+            InvalidContextContentDispatchException,
+            "ERROR_SERVICE_INVALID_DISPATCH_CONTEXT_CONTENT",
+            "Exception content",
+        ),
+        (
+            UnexpectedDispatchException,
+            "ERROR_SERVICE_UNEXPECTED_DISPATCH_ERROR",
+            "Exception content",
         ),
         (
             DoesNotExist,
@@ -771,7 +780,7 @@ def test_public_dispatch_data_sources_view_returns_error(
     mock_dispatch_context = MagicMock()
     mock_builder_dispatch_context.return_value = mock_dispatch_context
 
-    mock_service_contents = {"101": expected_exception()}
+    mock_service_contents = {"101": expected_exception("Exception content")}
     mock_dispatch_page_data_sources.return_value = mock_service_contents
 
     mock_page_id = 100
@@ -1086,7 +1095,7 @@ def test_public_dispatch_data_sources_list_rows_no_elements(
 
     assert response.status_code == HTTP_200_OK
     assert response.json() == {
-        str(data_source.id): {"has_next_page": False, "results": [{}] * 3}
+        str(data_source.id): {"has_next_page": False, "results": []}
     }
 
 
@@ -1195,7 +1204,7 @@ def test_public_dispatch_data_sources_list_rows_with_elements_and_role(
         assert response.json() == {
             str(data_source.id): {
                 "has_next_page": False,
-                "results": [{}] * 3,
+                "results": [],
             },
         }
 
@@ -1375,7 +1384,7 @@ def test_public_dispatch_data_sources_list_rows_with_page_visibility_all(
         assert response.json() == {
             str(data_source.id): {
                 "has_next_page": False,
-                "results": [{}] * 3,
+                "results": [],
             },
         }
 
@@ -1689,7 +1698,7 @@ def test_public_dispatch_data_sources_list_rows_with_page_visibility_logged_in(
         assert response.json() == {
             str(data_source.id): {
                 "has_next_page": False,
-                "results": [{}] * 3,
+                "results": [],
             },
         }
 
@@ -1916,46 +1925,7 @@ def test_list_elements_with_page_visibility_all(
     assert response.status_code == HTTP_200_OK
 
     if expect_fields:
-        assert response.json() == [
-            {
-                "id": element.id,
-                "level": 1,
-                "order": "1.00000000000000000000",
-                "page_id": page.id,
-                "parent_element_id": None,
-                "place_in_container": None,
-                "role_type": "disallow_all_except",
-                "roles": [element_role],
-                "style_background": "none",
-                "style_background_color": "#ffffffff",
-                "style_background_file": None,
-                "style_background_mode": "fill",
-                "style_border_bottom_color": "border",
-                "style_border_bottom_size": 0,
-                "style_border_left_color": "border",
-                "style_border_left_size": 0,
-                "style_border_right_color": "border",
-                "style_border_right_size": 0,
-                "style_border_top_color": "border",
-                "style_border_top_size": 0,
-                "style_margin_bottom": 0,
-                "style_margin_left": 0,
-                "style_margin_right": 0,
-                "style_margin_top": 0,
-                "style_padding_bottom": 10,
-                "style_padding_left": 20,
-                "style_padding_right": 20,
-                "style_padding_top": 10,
-                "style_background_radius": 0,
-                "style_border_radius": 0,
-                "style_width": "normal",
-                "style_width_child": "normal",
-                "styles": {},
-                "type": "heading",
-                "value": f"get('data_source.{data_source.id}.field_{field_id}')",
-                "visibility": "logged-in",
-            },
-        ]
+        assert [e["id"] for e in response.json()] == [element.id]
     else:
         assert response.json() == []
 
@@ -2089,46 +2059,8 @@ def test_list_elements_with_page_visibility_logged_in(
     assert response.status_code == HTTP_200_OK
 
     if expect_fields:
-        assert response.json() == [
-            {
-                "id": element.id,
-                "level": 1,
-                "order": "1.00000000000000000000",
-                "page_id": page.id,
-                "parent_element_id": None,
-                "place_in_container": None,
-                "role_type": "disallow_all_except",
-                "roles": [element_role],
-                "style_background": "none",
-                "style_background_color": "#ffffffff",
-                "style_background_file": None,
-                "style_background_mode": "fill",
-                "style_border_bottom_color": "border",
-                "style_border_bottom_size": 0,
-                "style_border_left_color": "border",
-                "style_border_left_size": 0,
-                "style_border_right_color": "border",
-                "style_border_right_size": 0,
-                "style_border_top_color": "border",
-                "style_border_top_size": 0,
-                "style_margin_bottom": 0,
-                "style_margin_left": 0,
-                "style_margin_right": 0,
-                "style_margin_top": 0,
-                "style_padding_bottom": 10,
-                "style_padding_left": 20,
-                "style_padding_right": 20,
-                "style_padding_top": 10,
-                "style_background_radius": 0,
-                "style_border_radius": 0,
-                "style_width": "normal",
-                "style_width_child": "normal",
-                "styles": {},
-                "type": "heading",
-                "value": f"get('data_source.{data_source.id}.field_{field_id}')",
-                "visibility": "logged-in",
-            },
-        ]
+        assert [e["id"] for e in response.json()] == [element.id]
+
     else:
         assert response.json() == []
 
@@ -2322,7 +2254,19 @@ def test_public_dispatch_data_source_with_refinements_referencing_trashed_field(
     user, token = data_fixture.create_user_and_token()
     workspace = data_fixture.create_workspace(user=user)
     database = data_fixture.create_database_application(workspace=workspace)
-    table = data_fixture.create_database_table(database=database)
+    table, fields, rows = data_fixture.build_table(
+        user=user,
+        database=database,
+        columns=[
+            ("Name", "text"),
+            ("Color", "text"),
+        ],
+        rows=[
+            ["Apple", "Red"],
+            ["Banana", "Yellow"],
+            ["Cherry", "Purple"],
+        ],
+    )
     trashed_field = data_fixture.create_text_field(table=table, trashed=True)
     builder = data_fixture.create_builder_application(workspace=workspace)
     integration = data_fixture.create_local_baserow_integration(
@@ -2337,6 +2281,11 @@ def test_public_dispatch_data_source_with_refinements_referencing_trashed_field(
     )
     service_filter = data_fixture.create_local_baserow_table_service_filter(
         service=data_source.service, field=trashed_field, value="abc", order=0
+    )
+
+    data_fixture.create_builder_heading_element(
+        page=page,
+        value=f"get('data_source.{data_source.id}.field_{fields[0].id}')",
     )
 
     url = reverse(

@@ -9,7 +9,12 @@ import EnterpriseSettings from '@baserow_enterprise/components/EnterpriseSetting
 import EnterpriseSettingsOverrideDashboardHelp from '@baserow_enterprise/components/EnterpriseSettingsOverrideDashboardHelp'
 import EnterpriseLogo from '@baserow_enterprise/components/EnterpriseLogo'
 import { DatabaseApplicationType } from '@baserow/modules/database/applicationTypes'
-import ExportWorkspaceModalWarning from '@baserow_enterprise/components/ExportWorkspaceModalWarning.vue'
+import ExportWorkspaceModalWarning from '@baserow_enterprise/components/ExportWorkspaceModalWarning'
+import AssistantSidebarItem from '@baserow_enterprise/components/assistant/AssistantSidebarItem'
+import AssistantPanel from '@baserow_enterprise/components/assistant/AssistantPanel'
+import DateDependencyMenuItem from '@baserow_enterprise/components/dateDependency/DateDependencyMenuItem'
+import DateDependencyFieldTypeIcon from '@baserow_enterprise/components/dateDependency/DateDependencyFieldTypeIcon'
+import { FF_ASSISTANT } from '@baserow/modules/core/plugins/featureFlags'
 
 export class EnterprisePlugin extends BaserowPlugin {
   static getType() {
@@ -18,6 +23,9 @@ export class EnterprisePlugin extends BaserowPlugin {
 
   getSidebarWorkspaceComponents(workspace) {
     const sidebarItems = []
+    if (this.app.$featureFlagIsEnabled(FF_ASSISTANT)) {
+      sidebarItems.push(AssistantSidebarItem)
+    }
     if (!this.app.$config.BASEROW_DISABLE_SUPPORT) {
       sidebarItems.push(ChatwootSupportSidebarWorkspace)
     }
@@ -41,14 +49,33 @@ export class EnterprisePlugin extends BaserowPlugin {
     return additionalComponents
   }
 
+  getRightSidebarWorkspaceComponents(workspace) {
+    const rightSidebarItems = []
+    if (this.app.$featureFlagIsEnabled(FF_ASSISTANT)) {
+      rightSidebarItems.push(AssistantPanel)
+    }
+    return rightSidebarItems
+  }
+
   getAdditionalTableContextComponents(workspace, table) {
+    const out = []
     if (
       this.app.$hasPermission('database.table.read_role', table, workspace.id)
     ) {
-      return [MemberRolesTableContextItem]
-    } else {
-      return []
+      out.push(MemberRolesTableContextItem)
     }
+    out.push(DateDependencyMenuItem)
+    return out
+  }
+
+  getAdditionalViewContextComponents(workspace, view) {
+    return [DateDependencyMenuItem]
+  }
+
+  getGridViewFieldTypeIconsBefore(workspace, view, field) {
+    const out = []
+    out.push(DateDependencyFieldTypeIcon)
+    return out
   }
 
   getExtraSnapshotModalComponents(workspace) {
@@ -98,5 +125,72 @@ export class EnterprisePlugin extends BaserowPlugin {
    */
   getVisuallyHiddenFeatures() {
     return []
+  }
+
+  /**
+   * Adds the custom CSS/JS defined for this builder.
+   */
+  getBuilderApplicationHeaderAddition({ builder, mode }) {
+    const css = `${this.app.$config.PUBLIC_BACKEND_URL}/api/custom_code/${
+      builder.id
+    }/css/${mode === 'preview' ? '' : 'public/'}`
+    const js = `${this.app.$config.PUBLIC_BACKEND_URL}/api/custom_code/${
+      builder.id
+    }/js/${mode === 'preview' ? '' : 'public/'}`
+
+    const script = []
+    const link = []
+
+    builder.scripts.forEach((s) => {
+      if (!s.url) {
+        return
+      }
+
+      const crossorigin =
+        s.crossorigin === 'credentials'
+          ? 'use-credentials'
+          : s.crossorigin === 'anonymous'
+          ? 'anonymous'
+          : null
+
+      if (s.type === 'javascript') {
+        script.push({
+          src: s.url,
+          crossorigin,
+          defer: s.load_type === 'defer',
+          async: s.load_type === 'async',
+          body: true,
+        })
+      }
+
+      if (s.type === 'stylesheet') {
+        script.push({
+          rel: 'stylesheet',
+          href: s.url,
+          crossorigin,
+          body: true,
+        })
+      }
+    })
+
+    if (builder.custom_code.css) {
+      link.push({
+        rel: 'stylesheet',
+        href: css,
+        body: true,
+      })
+    }
+    if (builder.custom_code.js) {
+      script.push({
+        src: js,
+        defer: true,
+        body: true,
+      })
+    }
+
+    return {
+      link,
+      script,
+    }
   }
 }

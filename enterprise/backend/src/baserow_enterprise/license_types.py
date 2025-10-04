@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from baserow_premium.license.features import PREMIUM
 from baserow_premium.license.models import License
@@ -7,11 +7,14 @@ from baserow_premium.license.registries import LicenseType, SeatUsageSummary
 from baserow.core.models import Workspace
 from baserow_enterprise.features import (
     ADVANCED_WEBHOOKS,
+    ASSISTANT,
     AUDIT_LOG,
+    BUILDER_CUSTOM_CODE,
     BUILDER_FILE_INPUT,
     BUILDER_NO_BRANDING,
     BUILDER_SSO,
     DATA_SYNC,
+    DATE_DEPENDENCY,
     ENTERPRISE_SETTINGS,
     FIELD_LEVEL_PERMISSIONS,
     RBAC,
@@ -30,14 +33,17 @@ COMMON_ADVANCED_FEATURES = [
     RBAC,
     TEAMS,
     AUDIT_LOG,
+    ASSISTANT,
     # database
     DATA_SYNC,
     ADVANCED_WEBHOOKS,
     FIELD_LEVEL_PERMISSIONS,
+    DATE_DEPENDENCY,
     # application builder
     BUILDER_SSO,
     BUILDER_NO_BRANDING,
     BUILDER_FILE_INPUT,
+    BUILDER_CUSTOM_CODE,
     # only self-hosted
     SSO,
 ]
@@ -70,6 +76,13 @@ class AdvancedLicenseType(LicenseType):
     ) -> Optional[SeatUsageSummary]:
         return RoleBasedSeatUsageSummaryCalculator.get_seat_usage_for_workspace(
             workspace
+        )
+
+    def get_seat_usage_summary_for_specific_users(
+        self, user_ids: List[int]
+    ) -> Optional[SeatUsageSummary]:
+        return RoleBasedSeatUsageSummaryCalculator.get_seat_usage_for_specific_users(
+            user_ids
         )
 
     def handle_seat_overflow(self, seats_taken: int, license_object: License):

@@ -209,7 +209,8 @@
         "placeholder": "Texte par défault"
     },
     "fieldSingleSelectSubForm": {
-        "optionsLabel": "Options"
+        "optionsLabel": "Options",
+        "defaultOptionLabel": "Option par défaut"
     },
     "fieldSingleSelectDropdown": {
         "notFound": "Option manquante"
@@ -271,7 +272,11 @@
         "nameNotAllowed": "Ce nom de champ n'est pas autorisé.",
         "nameTooLong": "Ce nom de champ est trop long.",
         "description": "Description",
-        "addDescription": "Ajouter une description"
+        "addDescription": "Ajouter une description",
+        "dbIndex": "Index",
+        "dbIndexError": "Ce type de champ ne peut pas avoir d'index. Veuillez le supprimer avant d'enregistrer ou de modifier le type de champ.",
+        "dbIndexDescription": "L'indexation peut améliorer considérablement les performances de filtrage, mais ralentit les opérations de création, de mise à jour et de suppression.",
+        "defaultValueDisabledByConstraint": "Impossible de définir une valeur par défaut avec une contrainte d'unicité"
     },
     "fieldLookupSubForm": {
         "noTable": "Vous devez créer au moins une autre table dans la même base de données pour pouvoir créer un lien.",
@@ -527,7 +532,8 @@
         "insertLeft": "Insérer à gauche",
         "duplicate": "Dupliquer le champ",
         "dataSyncField": "Le champ est en lecture seule et fait partie de la synchronisation des données de la table.",
-        "noWriteValues": "Les modifications de ce champ sont limitées."
+        "noWriteValues": "Les modifications de ce champ sont limitées.",
+        "dataSyncFieldTwoWaySync": "Le champ est synchronisé avec la synchronisation des données de la table."
     },
     "gridViewRow": {
         "rowNotMatchingFilters": "La ligne est filtrée",
@@ -882,7 +888,15 @@
     "rowHistorySidebar": {
         "you": "Vous",
         "name": "Historique",
-        "empty": "Aucun changement pour l'instant. Vous pourrez suivre les modifications apportées à cette ligne ici."
+        "empty": "Aucun changement pour l'instant. Vous pourrez suivre les modifications apportées à cette ligne ici.",
+        "updated": "a mis à jour cette ligne",
+        "submitted": "a soumis cette ligne",
+        "restored": "a restauré cette ligne",
+        "createdUndo": "a annulé la création d'une ligne",
+        "updatedUndo": "a annulé la mise à jour de lignes",
+        "deletedUndo": "a annulé la suppression d'une ligne",
+        "created": "a créé cette ligne",
+        "deleted": "a supprimé cette ligne"
     },
     "viewGroupByContext": {
         "groupBy": "Grouper par",
@@ -921,7 +935,9 @@
         "passwordUpdated": "Le mot de passe a été mis à jour"
     },
     "fieldPasswordSubForm": {
-        "description": "Il n'est pas encore possible d'utiliser directement le champ du mot de passe, celui-ci est uniquement utilisé pour l'authentification dans d'une application."
+        "description": "Le champ du mot de passe peut également être utilisé pour l'authentification de l'utilisateur dans une application.",
+        "allowEndpointAuthentication": "Autoriser l'authentification des endpoints de l'API",
+        "allowEndpointAuthenticationHelp": "Cela expose un endpoint où l'ID de la ligne et le mot de passe peuvent être vérifiés s'ils sont corrects. Cela permet d'utiliser Baserow comme backend d'authentification."
     },
     "dataProviderTypes": {
         "fieldsName": "Champs"
@@ -1064,7 +1080,10 @@
         "next": "Suivant",
         "fields": "Sélectionnez les champs que vous souhaitez synchroniser",
         "create": "Créer et synchroniser une table",
-        "error": "Un problème s'est produit lors de la synchronisation"
+        "error": "Un problème s'est produit lors de la synchronisation",
+        "autoAddLabel": "Ajout automatique de nouvelles propriétés",
+        "autoAddHelper": "Ajoute et synchronise automatiquement les propriétés nouvellement disponibles de la source de données dans la table Baserow. Notez que pour que cela fonctionne, toutes les propriétés doivent être synchronisées.",
+        "twoWaySyncLabel": "Synchronisation bidirectionnelle"
     },
     "syncTableModal": {
         "sync": "Synchroniser la table",
@@ -1145,5 +1164,26 @@
     },
     "fieldBooleanSubForm": {
         "defaultValue": "Par défaut"
+    },
+    "apiDocsListTables": {
+        "listTables": "Lister toutes les tables",
+        "listTablesDescription": "Ce point d'accès ne fonctionne qu'en combinaison avec l'authentification par jeton. Il répertorie toutes les tables pour lesquelles le jeton a un accès de création, de lecture, de mise à jour ou de suppression."
+    },
+    "fieldMultipleSelectSubForm": {
+        "defaultOptionsLabel": "Options par défaut",
+        "optionsLabel": "Options"
+    },
+    "apiDocsPasswordFieldAuthentication": {
+        "title": "{name} authentification",
+        "description": "Vérifie si le mot de passe et la ligne fournis correspondent à ce qui est stocké dans la cellule.",
+        "fieldId": "L'identifiant du champ dans lequel le mot de passe doit être vérifié.",
+        "rowId": "L'ID de ligne où vérifier le mot de passe.",
+        "password": "Le mot de passe qui doit être vérifié s'il est correct."
+    },
+    "fieldRules": {
+        "errorTitle": "Erreur lors du traitement des règles du champ",
+        "ruleDoesNotExist": "La règle n'existe pas",
+        "ruleTypeDoesNotExist": "Le type de règle n'existe pas",
+        "ruleAlreadyExists": "La règle existe déjà"
     }
 }

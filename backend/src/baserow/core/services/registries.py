@@ -1,11 +1,21 @@
 from abc import ABC, abstractmethod
+from dataclasses import fields
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar
 
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 
+from loguru import logger
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
+from baserow.core.formula import resolve_formula
+from baserow.core.formula.exceptions import (
+    InvalidFormulaContext,
+    InvalidFormulaContextContent,
+)
+from baserow.core.formula.parser.exceptions import BaserowFormulaException
+from baserow.core.formula.registries import formula_runtime_function_registry
 from baserow.core.integrations.exceptions import IntegrationDoesNotExist
 from baserow.core.integrations.handler import IntegrationHandler
 from baserow.core.registry import (
@@ -16,30 +26,38 @@ from baserow.core.registry import (
     InstanceWithFormulaMixin,
     ModelInstanceMixin,
     ModelRegistryMixin,
+    PublicCustomFieldsInstanceMixin,
     Registry,
 )
 from baserow.core.services.dispatch_context import DispatchContext
-from baserow.core.services.types import DispatchResult
+from baserow.core.services.types import DispatchResult, FormulaToResolve
 
-from .exceptions import ServiceTypeDoesNotExist
+from .exceptions import (
+    DispatchException,
+    InvalidContextContentDispatchException,
+    InvalidContextDispatchException,
+    ServiceImproperlyConfiguredDispatchException,
+    ServiceTypeDoesNotExist,
+    UnexpectedDispatchException,
+)
 from .models import Service
 from .types import ServiceDictSubClass, ServiceSubClass
 
 
 class DispatchTypes(str, Enum):
-    # A `ServiceType` which is used by a `WorkflowAction`.
-    DISPATCH_WORKFLOW_ACTION = "dispatch-action"
-    # A `ServiceType` which is used by a `DataSource`.
-    DISPATCH_DATA_SOURCE = "dispatch-data-source"
-
-    # A `ServiceType` which is used by a `AutomationNode`.
-    DISPATCH_TRIGGER = "dispatch-trigger"
+    # A `ServiceType` which performs an action.
+    ACTION = "action"
+    # A `ServiceType` which fetches data.
+    DATA = "data"
+    # A `ServiceType` which responds to events.
+    EVENT = "event"
 
 
 class ServiceType(
     InstanceWithFormulaMixin,
     EasyImportExportMixin[ServiceSubClass],
     ModelInstanceMixin[ServiceSubClass],
+    PublicCustomFieldsInstanceMixin,
     CustomFieldsInstanceMixin,
     Instance,
     ABC,
@@ -54,22 +72,42 @@ class ServiceType(
     parent_property_name = "integration"
     id_mapping_name = "services"
 
-    # The maximum number of records this service is able to return.
-    # By default, the maximum is `None`, which is unlimited.
-    max_result_limit = None
-
-    # The default number of records this service will return,
-    # unless instructed otherwise by a user.
-    default_result_limit = max_result_limit
+    default_serializer_field_names = ["sample_data"]
 
     # Does this service return a list of record?
     returns_list = False
 
+    # Is this a service that triggers events?
+    is_trigger: bool = False
+
     # What parent object is responsible for dispatching this `ServiceType`?
-    # It could be via a `DataSource`, in which case `DISPATCH_DATA_SOURCE`
-    # should be chosen, or via a `WorkflowAction`, in which case
-    # `DISPATCH_WORKFLOW_ACTION` should be chosen.
-    dispatch_type = None
+    # It could be via a `DataSource`, in which case `DATA` should be
+    # chosen, or via a `WorkflowAction`, in which case `ACTION`
+    # should be chosen. Multiple dispatch types can be selected if the service is
+    # used across modules.
+    dispatch_types: List[DispatchTypes] = []
+
+    # By default all service data should be hidden
+    public_serializer_field_names = []
+    public_serializer_field_overrides = {}
+
+    def can_be_dispatched_as(self, dispatch_type: DispatchTypes) -> bool:
+        """
+        Returns whether this service can be dispatched as the given dispatch type.
+
+        :param dispatch_type: The dispatch type to check.
+        :return: If the service can be dispatched as the given type.
+        """
+
+        return dispatch_type in self.dispatch_types
+
+    def get_integration_type(self):
+        from baserow.core.integrations.registries import integration_type_registry
+
+        if self.integration_type:
+            return integration_type_registry.get(self.integration_type)
+
+        return None
 
     def get_id_property(self, service: Service) -> str:
         """
@@ -197,10 +235,33 @@ class ServiceType(
 
         return None
 
+    def get_sample_data(self, service: ServiceSubClass) -> Optional[Dict[Any, Any]]:
+        """Return the sample data for this service."""
+
+        return service.sample_data
+
     def get_context_data_schema(self, service: ServiceSubClass):
         """Return the schema for the context data."""
 
         return None
+
+    def formulas_to_resolve(self, service: ServiceSubClass) -> list[FormulaToResolve]:
+        return []
+
+    def _get_validation_details(self, error):
+        detail = error.detail
+
+        if isinstance(detail, str):
+            return detail
+        elif isinstance(detail, list):
+            return str(detail[0]) if detail else ""
+        elif isinstance(detail, dict):
+            for field, errors in detail.items():
+                if isinstance(errors, list) and errors:
+                    return str(errors[0])
+                else:
+                    return str(errors)
+        return str(detail)
 
     def resolve_service_formulas(
         self,
@@ -217,7 +278,35 @@ class ServiceType(
         :return: Any
         """
 
-        return {}
+        resolved_values = {}
+        for key, formula, ensurer, label in self.formulas_to_resolve(service):
+            try:
+                resolved_values[key] = ensurer(
+                    resolve_formula(
+                        formula,
+                        formula_runtime_function_registry,
+                        dispatch_context.clone(),
+                    )
+                )
+            except InvalidFormulaContext as e:
+                raise InvalidContextDispatchException(str(e)) from e
+            except InvalidFormulaContextContent as e:
+                message = f"Value error for {label}: {str(e)}"
+                raise InvalidContextContentDispatchException(message) from e
+            except ValidationError as e:
+                message = f"Value error for {label}: {e.message}"
+                raise InvalidContextContentDispatchException(message) from e
+            except BaserowFormulaException as e:
+                message = f"Error in formula for {label}: {str(e)}"
+                raise ServiceImproperlyConfiguredDispatchException(message) from e
+            except DispatchException:
+                raise
+            except Exception as e:
+                logger.exception(f"Unexpected error for {label}")
+                message = f"Unknown error in formula for {label}: {str(e)}"
+                raise UnexpectedDispatchException(message) from e
+
+        return resolved_values
 
     def dispatch_transform(
         self,
@@ -262,8 +351,34 @@ class ServiceType(
         """
 
         resolved_values = self.resolve_service_formulas(service, dispatch_context)
+
+        # If simulated, try to return existing sample data
+        if (
+            dispatch_context.use_sample_data
+            and (
+                dispatch_context.update_sample_data_for is None
+                or service not in dispatch_context.update_sample_data_for
+            )
+            and service.get_type().get_sample_data(service) is not None
+        ):
+            return DispatchResult(**self.get_sample_data(service))
+
         data = self.dispatch_data(service, resolved_values, dispatch_context)
-        return self.dispatch_transform(data)
+        serialized_data = self.dispatch_transform(data)
+
+        if dispatch_context.use_sample_data and (
+            dispatch_context.update_sample_data_for is None
+            or service in dispatch_context.update_sample_data_for
+        ):
+            sample_data = {}
+            for field in fields(serialized_data):
+                value = getattr(serialized_data, field.name)
+                sample_data[field.name] = value
+
+            service.sample_data = sample_data
+            service.save()
+
+        return serialized_data
 
     def get_schema_name(self, service: Service) -> str:
         """
@@ -361,10 +476,6 @@ class ServiceType(
         return property_name
 
 
-class TriggerServiceTypeMixin:
-    service_type = DispatchTypes.DISPATCH_TRIGGER
-
-
 ServiceTypeSubClass = TypeVar("ServiceTypeSubClass", bound=ServiceType)
 
 
@@ -390,6 +501,54 @@ class ListServiceTypeMixin:
         :param dispatch_context: The context used for the dispatch.
         :return: A dictionary mapping each record to its name.
         """
+
+    @abstractmethod
+    def get_max_result_limit(self, service: Service):
+        """
+        The maximum number of records this service is able to return.
+        Is the maximum is `None`, then it's unlimited.
+        """
+
+    @abstractmethod
+    def get_default_result_limit(self, service: Service):
+        """
+        The default number of records this service will return,
+        unless instructed otherwise by a user.
+        """
+
+
+class TriggerServiceTypeMixin(ABC):
+    # Is this a service that triggers events?
+    is_trigger: bool = True
+
+    # The callable function which should be called when the event occurs.
+    on_event: Callable = lambda *args: None
+
+    # The service is always dispatched by an event.
+    dispatch_types = [DispatchTypes.EVENT]
+
+    @abstractmethod
+    def start_listening(self, on_event: Callable) -> None:
+        """
+        Triggers, a type of service which respond to internal and external events and
+        trigger their own dispatch, need the ability to "start" listening to their
+        events. This method ensure that we only begin listening when we need to.
+
+        :param on_event: A callable function which should be called when
+            the internal or external event occurs.
+        """
+
+        self.on_event = on_event
+
+    def stop_listening(self) -> None:
+        """
+        Triggers, a type of service which respond to internal and external events and
+        trigger their own dispatch, need the ability to "stop" listening to their
+        events. This method ensure that we can stop listening when we need to.
+        :return:
+        """
+
+        ...
 
 
 class ServiceTypeRegistry(

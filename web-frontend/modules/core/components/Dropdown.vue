@@ -47,13 +47,14 @@
           }}</span>
         </slot>
       </template>
+
       <i class="dropdown__toggle-icon iconoir-nav-arrow-down"></i>
     </a>
     <div
       ref="itemsContainer"
       class="dropdown__items"
       :class="{
-        hidden: !open,
+        hidden: !open && !openOnMount,
         'dropdown__items--fixed': fixedItemsImmutable,
         'dropdown__items--max-width': maxWidth,
       }"
@@ -71,7 +72,7 @@
         />
       </div>
       <ul
-        v-show="hasDropdownItem"
+        v-show="hasItems && hasDropdownItem"
         ref="items"
         v-auto-overflow-scroll
         class="select__items"
@@ -80,7 +81,7 @@
       >
         <slot></slot>
       </ul>
-      <div v-if="!hasDropdownItem" class="select__items--empty">
+      <div v-if="!hasItems || !hasDropdownItem" class="select__items--empty">
         <slot name="emptyState">
           {{ $t('dropdown.empty') }}
         </slot>

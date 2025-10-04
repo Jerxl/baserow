@@ -21,7 +21,7 @@ from baserow.contrib.database.rows.handler import (
     GeneratedTableModelForUpdate,
     RowHandler,
 )
-from baserow.contrib.database.rows.types import FileImportDict
+from baserow.contrib.database.rows.types import FileImportDict, UpdatedRowsData
 from baserow.contrib.database.table.handler import TableHandler
 from baserow.contrib.database.table.models import (
     FieldObject,
@@ -130,7 +130,7 @@ class CreateRowActionType(UndoableActionType):
         :return: The created row instance.
         """
 
-        if table.is_data_synced_table:
+        if table.is_read_only_data_synced_table:
             raise CannotCreateRowsInTable(
                 "Can't create rows because it has a data sync."
             )
@@ -240,19 +240,20 @@ class CreateRowsActionType(UndoableActionType):
         :return: The created list of rows instances.
         """
 
-        if table.is_data_synced_table:
+        if table.is_read_only_data_synced_table:
             raise CannotCreateRowsInTable(
                 "Can't create rows because it has a data sync."
             )
         rh = RowHandler()
-        rows = rh.create_rows(
+        created_rows = rh.create_rows(
             user,
             table,
             rows_values,
             before_row=before_row,
             model=model,
             send_webhook_events=send_webhook_events,
-        ).created_rows
+        )
+        rows = created_rows.created_rows
 
         workspace = table.database.workspace
         tmodel = table.get_model()
@@ -346,7 +347,7 @@ class ImportRowsActionType(UndoableActionType):
         :return: The created list of rows instances and the error report.
         """
 
-        if table.is_data_synced_table:
+        if table.is_read_only_data_synced_table:
             raise CannotCreateRowsInTable(
                 "Can't create rows because it has a data sync."
             )
@@ -442,7 +443,7 @@ class DeleteRowActionType(UndoableActionType):
         :raises RowDoesNotExist: When the row with the provided id does not exist.
         """
 
-        if table.is_data_synced_table:
+        if table.is_read_only_data_synced_table:
             raise CannotDeleteRowsInTable(
                 "Can't delete rows because it has a data sync."
             )
@@ -537,7 +538,7 @@ class DeleteRowsActionType(UndoableActionType):
         :raises RowDoesNotExist: When the row with the provided id does not exist.
         """
 
-        if table.is_data_synced_table:
+        if table.is_read_only_data_synced_table:
             raise CannotDeleteRowsInTable(
                 "Can't delete rows because it has a data sync."
             )
@@ -910,7 +911,7 @@ class UpdateRowsActionType(UndoableActionType):
         rows_values: List[Dict[str, Any]],
         model: Optional[Type[GeneratedTableModel]] = None,
         send_webhook_events: bool = True,
-    ) -> List[GeneratedTableModelForUpdate]:
+    ) -> UpdatedRowsData:
         """
         Updates field values in batch based on provided rows with the new values.
         See the baserow.contrib.database.rows.handler.RowHandler.update_rows
@@ -953,7 +954,7 @@ class UpdateRowsActionType(UndoableActionType):
         )
         cls.register_action(user, params, cls.scope(table.id), workspace=workspace)
 
-        return updated_rows
+        return result
 
     @classmethod
     def serialized_to_params(cls, serialized_params: Any) -> Any:
